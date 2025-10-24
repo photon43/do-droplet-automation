@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # DigitalOcean User Data Script
-# Downloads and runs hardening script from GitHub
+# Downloads and runs setup scripts from GitHub
 # This runs automatically on first boot as root
 
 set -e
@@ -17,38 +17,74 @@ log_print() {
 log_print "=== Starting DigitalOcean Droplet Setup ==="
 log_print "User Data script started"
 
-# Download hardening script from GitHub
-log_print "Downloading hardening script from GitHub..."
-SCRIPT_URL="https://raw.githubusercontent.com/photon43/do-droplet-automation/main/scripts/harden-droplet.sh"
-SCRIPT_PATH="/root/harden-droplet.sh"
+# GitHub repository URL
+GITHUB_REPO="https://raw.githubusercontent.com/photon43/do-droplet-automation/main/scripts"
 
-if curl -sSL "$SCRIPT_URL" -o "$SCRIPT_PATH"; then
-    log_print "✓ Script downloaded successfully"
+# Step 1: Download and run hardening script
+log_print ""
+log_print "Step 1: Security Hardening"
+log_print "Downloading hardening script from GitHub..."
+
+HARDENING_SCRIPT="/root/harden-droplet.sh"
+HARDENING_URL="${GITHUB_REPO}/harden-droplet.sh"
+
+if curl -sSL "$HARDENING_URL" -o "$HARDENING_SCRIPT"; then
+    log_print "✓ Hardening script downloaded"
 else
-    log_print "✗ Failed to download script"
+    log_print "✗ Failed to download hardening script"
     exit 1
 fi
 
-# Make executable and run
-log_print "Making script executable..."
-chmod +x "$SCRIPT_PATH"
-
+chmod +x "$HARDENING_SCRIPT"
 log_print "Running hardening script..."
 log_print "========================================"
 
-# Run the hardening script and capture its output
-if bash "$SCRIPT_PATH" 2>&1 | tee -a "$USERDATA_LOG"; then
+if bash "$HARDENING_SCRIPT" 2>&1 | tee -a "$USERDATA_LOG"; then
     log_print "========================================"
-    log_print "✓ Hardening script completed successfully"
+    log_print "✓ Hardening completed successfully"
 else
     log_print "========================================"
-    log_print "✗ Hardening script encountered errors"
+    log_print "✗ Hardening encountered errors"
     exit 1
 fi
 
+# Step 2: Download and run web server configuration script
+log_print ""
+log_print "Step 2: Web Server Configuration"
+log_print "Downloading web server configuration script from GitHub..."
+
+WEBSERVER_SCRIPT="/root/configure-webserver.sh"
+WEBSERVER_URL="${GITHUB_REPO}/configure-webserver.sh"
+
+if curl -sSL "$WEBSERVER_URL" -o "$WEBSERVER_SCRIPT"; then
+    log_print "✓ Web server configuration script downloaded"
+else
+    log_print "✗ Failed to download web server configuration script"
+    exit 1
+fi
+
+chmod +x "$WEBSERVER_SCRIPT"
+log_print "Running web server configuration script..."
+log_print "========================================"
+
+if bash "$WEBSERVER_SCRIPT" 2>&1 | tee -a "$USERDATA_LOG"; then
+    log_print "========================================"
+    log_print "✓ Web server configuration completed successfully"
+else
+    log_print "========================================"
+    log_print "✗ Web server configuration encountered errors"
+    exit 1
+fi
+
+# Summary
 log_print ""
 log_print "=== Setup Complete ==="
 log_print "User Data execution finished"
-log_print "Check logs:"
+log_print ""
+log_print "Log files:"
 log_print "  - This script: cat $USERDATA_LOG"
 log_print "  - Hardening: cat /root/hardening-*.log"
+log_print "  - Web server: cat /root/webserver-config-*.log"
+log_print ""
+
+exit 0
