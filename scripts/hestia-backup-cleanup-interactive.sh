@@ -26,12 +26,12 @@ prompt_for_value() {
   local response
   
   if [ -n "$current_value" ]; then
-    echo -n "$prompt_text (current: $current_value): "
+    echo "$prompt_text (current: $current_value): " >&2
   else
-    echo -n "$prompt_text: "
+    echo "$prompt_text: " >&2
   fi
   
-  read -r response
+  read -r response < /dev/tty
   
   if [ -z "$response" ]; then
     echo "$current_value"
@@ -78,7 +78,7 @@ EOF
 
 validate_api_key() {
   if [ -z "${BREVO_API_KEY:-}" ]; then
-    read -sp "Enter Brevo API Key: " BREVO_API_KEY
+    read -sp "Enter Brevo API Key: " BREVO_API_KEY < /dev/tty
     echo ""
     [ -z "$BREVO_API_KEY" ] && { log_message "✗ API key is required"; exit 1; }
   fi
