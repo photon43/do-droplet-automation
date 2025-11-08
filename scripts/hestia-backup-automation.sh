@@ -29,7 +29,7 @@ log_message() {
 
 get_real_users() {
   ls /home | grep -v "^lost+found$" | while read user; do
-    if [ -f "/home/$user/$user.conf" ]; then
+    if [ -f "/home/$user/conf/$user.conf" ]; then
       WEB_DIR="/home/$user/web"
       if [ -d "$WEB_DIR" ] && [ "$(ls -A $WEB_DIR 2>/dev/null)" ]; then
         echo "$user"
