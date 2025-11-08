@@ -1,71 +1,42 @@
 #!/bin/bash
 
-set -euo pipefail
-
 CONFIG_FILE="/etc/hestia/backup.conf"
-LOG_DIR="/var/log/hestia"
-LOG_FILE="$LOG_DIR/cleanup-automation.log"
+LOG_FILE="/var/log/hestia/cleanup-automation.log"
 
-mkdir -p "$LOG_DIR"
-touch "$LOG_FILE"
-
-log_message() {
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
-}
-
-load_existing_config() {
+load_config() {
   if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
-    log_message "✓ Loaded existing config from $CONFIG_FILE"
   fi
 }
 
-prompt_for_value() {
-  local prompt_text=$1
-  local current_value=${2:-}
-  local response
+prompt_for_config() {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  echo "=== HestiaCP Backup Cleanup Configuration ==="
+  echo ""
   
-  if [ -n "$current_value" ]; then
-    printf "%s (current: %s): " "$prompt_text" "$current_value" >&2
-  else
-    printf "%s: " "$prompt_text" >&2
+  if [ -z "$RCLONE_BUCKET" ]; then
+    read -p "Enter S3 Bucket Name (e.g., gestalt.digital-ocean): " RCLONE_BUCKET
   fi
   
-  read -r response
-  
-  if [ -z "$response" ]; then
-    echo "$current_value"
-  else
-    echo "$response"
+  if [ -z "$RCLONE_REMOTE" ]; then
+    read -p "Enter Rclone Remote Name (e.g., s3-gestalt): " RCLONE_REMOTE
   fi
-}
-
-check_rclone_config() {
-  local remote=$1
   
-  if ! rclone config show "$remote" > /dev/null 2>&1; then
-    log_message "✗ ERROR: Rclone remote '$remote' not found"
-    log_message "Configure it first: rclone config"
-    exit 1
+  if [ -z "$TO_EMAIL" ]; then
+    read -p "Enter Email Recipient (e.g., admin@example.com): " TO_EMAIL
   fi
-}
-
-test_s3_connection() {
-  local remote=$1
-  local bucket=$2
   
-  log_message "Testing S3 connection..."
-  if rclone ls "$remote:$bucket" > /dev/null 2>&1; then
-    log_message "✓ S3 connection successful"
-    return 0
-  else
-    log_message "✗ ERROR: Cannot connect to S3 bucket"
-    return 1
+  if [ -z "$RETENTION_DAYS" ]; then
+    read -p "Enter Retention Days (e.g., 42 for 6 weeks): " RETENTION_DAYS
   fi
-}
-
-save_config() {
-  cat > "$CONFIG_FILE" << EOF
+  
+  if [ -z "$SCHEDULE_LABEL" ]; then
+    read -p "Enter Cleanup Schedule Label (optional, e.g., production): " SCHEDULE_LABEL
+  fi
+  
+  FROM_EMAIL="noreply@serveradmin.11massmedia.com"
+  
+  tee "$CONFIG_FILE" > /dev/null <<EOF
 RCLONE_BUCKET="$RCLONE_BUCKET"
 RCLONE_REMOTE="$RCLONE_REMOTE"
 TO_EMAIL="$TO_EMAIL"
@@ -73,56 +44,48 @@ FROM_EMAIL="$FROM_EMAIL"
 RETENTION_DAYS="$RETENTION_DAYS"
 SCHEDULE_LABEL="$SCHEDULE_LABEL"
 EOF
-  log_message "✓ Config saved to $CONFIG_FILE"
+
+  chmod 600 "$CONFIG_FILE"
+  echo "Configuration saved to $CONFIG_FILE"
 }
 
-validate_api_key() {
-  if [ -z "${BREVO_API_KEY:-}" ]; then
-    read -sp "Enter Brevo API Key: " BREVO_API_KEY >&2
-    echo "" >&2
-    [ -z "$BREVO_API_KEY" ] && { log_message "✗ API key is required"; exit 1; }
+check_api_key() {
+  if [ -z "$BREVO_API_KEY" ]; then
+    read -p "Enter Brevo API Key: " BREVO_API_KEY
+    if [ -z "$BREVO_API_KEY" ]; then
+      echo "Error: Brevo API Key is required"
+      exit 1
+    fi
   fi
 }
 
-send_email_report() {
-  local end_time=$(date +%s)
-  local total_duration=$((end_time - START_TIME))
-  local total_size_gb=$(echo "scale=2; $TOTAL_SIZE_FREED / 1024 / 1024 / 1024" | bc)
-  
-  local payload=$(cat <<'PAYLOAD'
-{
-  "sender": {
-    "name": "Backup Cleanup",
-    "email": "FROM_EMAIL_PLACEHOLDER"
-  },
-  "to": [{
-    "email": "TO_EMAIL_PLACEHOLDER"
-  }],
-  "subject": "S3 Backup Cleanup Report - RETENTION_LABEL",
-  "htmlContent": "<html><body><h2>S3 Backup Cleanup Report</h2><p><strong>Total Files Deleted:</strong> TOTAL_DELETED</p><p><strong>Space Freed:</strong> TOTAL_SIZE_GB GB</p><p><strong>Duration:</strong> TOTAL_DURATION seconds</p><p><strong>Retention Policy:</strong> Keep last RETENTION_DAYS days</p></body></html>"
+load_config
+
+if [ -z "$RCLONE_BUCKET" ] || [ -z "$RETENTION_DAYS" ]; then
+  prompt_for_config
+  load_config
+fi
+
+check_api_key
+
+TOTAL_DELETED=0
+TOTAL_SIZE_FREED=0
+START_TIME=$(date +%s)
+DETAILED_REPORT=""
+
+log_message() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+  echo "$1"
 }
-PAYLOAD
-)
-  
-  payload="${payload//FROM_EMAIL_PLACEHOLDER/$FROM_EMAIL}"
-  payload="${payload//TO_EMAIL_PLACEHOLDER/$TO_EMAIL}"
-  payload="${payload//TOTAL_DELETED/$TOTAL_DELETED}"
-  payload="${payload//TOTAL_SIZE_GB/$total_size_gb}"
-  payload="${payload//TOTAL_DURATION/$total_duration}"
-  payload="${payload//RETENTION_DAYS/$RETENTION_DAYS}"
-  payload="${payload//RETENTION_LABEL/$SCHEDULE_LABEL}"
-  
-  curl -s -X POST https://api.brevo.com/v3/smtp/email \
-    -H "accept: application/json" \
-    -H "api-key: $BREVO_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "$payload" > /dev/null 2>&1 || log_message "✗ Email send failed (but cleanup completed)"
-  
-  log_message "✓ Email report sent to: $TO_EMAIL"
+
+get_real_users() {
+  v-list-users plain | grep -v "^root" | awk '{print $1}'
 }
 
 cleanup_user_backups() {
   local user=$1
+  local user_deleted=0
+  local user_size=0
   
   log_message "Scanning backups for user: $user"
   
@@ -143,90 +106,76 @@ cleanup_user_backups() {
     local age_days=$((age_seconds / 86400))
     
     if [ $age_days -gt $RETENTION_DAYS ]; then
-      log_message "  → Deleting: $filename (age: ${age_days}d, size: $((size / 1024 / 1024))MB)"
+      local size_mb=$((size / 1024 / 1024))
+      log_message "  → Deleting: $filename (age: ${age_days}d, size: ${size_mb}MB)"
       
       if rclone delete "$RCLONE_REMOTE:$RCLONE_BUCKET/$filename" 2>/dev/null; then
         TOTAL_DELETED=$((TOTAL_DELETED + 1))
         TOTAL_SIZE_FREED=$((TOTAL_SIZE_FREED + size))
+        user_deleted=$((user_deleted + 1))
+        user_size=$((user_size + size))
       else
         log_message "  ✗ Failed to delete: $filename"
       fi
     fi
   done
+  
+  if [ $user_deleted -gt 0 ]; then
+    local user_size_mb=$((user_size / 1024 / 1024))
+    DETAILED_REPORT="$DETAILED_REPORT<tr><td><strong>$user</strong></td><td>Deleted: $user_deleted</td><td>${user_size_mb}MB</td></tr>"
+  fi
 }
 
-get_real_users() {
-  v-list-users plain 2>/dev/null | grep -v "^root" | awk '{print $1}' || echo ""
+send_email_report() {
+  local end_time=$(date +%s)
+  local total_duration=$((end_time - START_TIME))
+  local total_size_gb=$(echo "scale=2; $TOTAL_SIZE_FREED / 1024 / 1024 / 1024" | bc)
+  
+  local payload=$(cat <<'PAYLOAD'
+{
+  "sender": {
+    "name": "Backup Cleanup",
+    "email": "X_FROM_EMAIL"
+  },
+  "to": [{
+    "email": "X_TO_EMAIL"
+  }],
+  "subject": "Cleanup Report - X_HOSTNAME - X_DELETED Files Removed",
+  "htmlContent": "<html><body><h2>Automated Backup Cleanup Report - X_HOSTNAME</h2><h3>Summary</h3><p><strong>Total Files Deleted:</strong> X_DELETED<br><strong>Total Space Freed:</strong> X_SIZE_GB GB<br><strong>Retention Policy:</strong> X_RETENTION days<br><strong>Duration:</strong> X_DURATION s<br><strong>Date:</strong> X_DATE</p><h3>Detailed Results</h3><table border=\"1\" cellpadding=\"10\"><tr><th>User</th><th>Action</th><th>Space Freed</th></tr>X_DETAILS</table></body></html>"
+}
+PAYLOAD
+)
+  
+  payload="${payload//X_FROM_EMAIL/$FROM_EMAIL}"
+  payload="${payload//X_TO_EMAIL/$TO_EMAIL}"
+  payload="${payload//X_HOSTNAME/$(hostname)}"
+  payload="${payload//X_DELETED/$TOTAL_DELETED}"
+  payload="${payload//X_SIZE_GB/$total_size_gb}"
+  payload="${payload//X_RETENTION/$RETENTION_DAYS}"
+  payload="${payload//X_DURATION/$total_duration}"
+  payload="${payload//X_DATE/$(date '+%Y-%m-%d %H:%M:%S UTC')}"
+  payload="${payload//X_DETAILS/$DETAILED_REPORT}"
+  
+  curl -X POST https://api.brevo.com/v3/smtp/email \
+    -H "accept: application/json" \
+    -H "api-key: $BREVO_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$payload" > /dev/null 2>&1
+  
+  log_message "Email report sent to: $TO_EMAIL"
 }
 
-main() {
-  log_message "=========================================="
-  log_message "Starting Backup Cleanup Configuration"
-  log_message "=========================================="
-  
-  load_existing_config
-  
-  log_message ""
-  log_message "Interactive Configuration:"
-  log_message ""
-  
-  RCLONE_REMOTE=$(prompt_for_value "Rclone remote name" "${RCLONE_REMOTE:-}")
-  [ -z "$RCLONE_REMOTE" ] && { log_message "✗ Rclone remote is required"; exit 1; }
-  
-  RCLONE_BUCKET=$(prompt_for_value "S3 bucket name" "${RCLONE_BUCKET:-}")
-  [ -z "$RCLONE_BUCKET" ] && { log_message "✗ S3 bucket is required"; exit 1; }
-  
-  TO_EMAIL=$(prompt_for_value "Email recipient" "${TO_EMAIL:-}")
-  [ -z "$TO_EMAIL" ] && { log_message "✗ Email recipient is required"; exit 1; }
-  
-  FROM_EMAIL=$(prompt_for_value "From email address" "${FROM_EMAIL:-noreply@serveradmin.11massmedia.com}")
-  [ -z "$FROM_EMAIL" ] && { log_message "✗ From email is required"; exit 1; }
-  
-  RETENTION_DAYS=$(prompt_for_value "Retention days (e.g., 42 for 6 weeks)" "${RETENTION_DAYS:-42}")
-  [ -z "$RETENTION_DAYS" ] && { log_message "✗ Retention days is required"; exit 1; }
-  
-  SCHEDULE_LABEL=$(prompt_for_value "Schedule label (e.g., production)" "${SCHEDULE_LABEL:-production}")
-  [ -z "$SCHEDULE_LABEL" ] && { log_message "✗ Schedule label is required"; exit 1; }
-  
-  log_message ""
-  log_message "Validating configuration..."
-  
-  check_rclone_config "$RCLONE_REMOTE"
-  test_s3_connection "$RCLONE_REMOTE" "$RCLONE_BUCKET"
-  validate_api_key
-  
-  log_message ""
-  log_message "Configuration Summary:"
-  log_message "  Rclone Remote: $RCLONE_REMOTE"
-  log_message "  S3 Bucket: $RCLONE_BUCKET"
-  log_message "  Retention: $RETENTION_DAYS days"
-  log_message "  Email to: $TO_EMAIL"
-  log_message "  Schedule: $SCHEDULE_LABEL"
-  log_message ""
-  
-  save_config
-  
-  log_message ""
-  log_message "=========================================="
-  log_message "Running Cleanup Cycle"
-  log_message "=========================================="
-  
-  START_TIME=$(date +%s)
-  TOTAL_DELETED=0
-  TOTAL_SIZE_FREED=0
-  
-  while read -r user; do
-    [ -z "$user" ] && continue
-    cleanup_user_backups "$user"
-  done < <(get_real_users)
-  
-  send_email_report
-  
-  log_message "=========================================="
-  log_message "Cleanup Complete"
-  log_message "  Files deleted: $TOTAL_DELETED"
-  log_message "  Space freed: $(echo "scale=2; $TOTAL_SIZE_FREED / 1024 / 1024 / 1024" | bc)GB"
-  log_message "=========================================="
-}
+log_message "=========================================="
+log_message "Starting backup cleanup cycle"
+log_message "=========================================="
 
-main "$@"
+while read user; do
+  cleanup_user_backups "$user"
+done < <(get_real_users)
+
+send_email_report
+
+log_message "=========================================="
+log_message "Cleanup cycle complete"
+log_message "Total Deleted: $TOTAL_DELETED | Space Freed: $(echo "scale=2; $TOTAL_SIZE_FREED / 1024 / 1024 / 1024" | bc)GB"
+log_message "=========================================="
