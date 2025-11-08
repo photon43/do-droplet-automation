@@ -78,11 +78,9 @@ EOF
 
 validate_api_key() {
   if [ -z "${BREVO_API_KEY:-}" ]; then
-    log_message "✗ ERROR: BREVO_API_KEY environment variable not set"
-    echo "Set it before running:"
-    echo "  export BREVO_API_KEY=\"your-key-here\""
-    echo "  $0"
-    exit 1
+    read -sp "Enter Brevo API Key: " BREVO_API_KEY
+    echo ""
+    [ -z "$BREVO_API_KEY" ] && { log_message "✗ API key is required"; exit 1; }
   fi
 }
 
