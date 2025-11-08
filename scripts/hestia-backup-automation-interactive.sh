@@ -11,6 +11,7 @@ load_config() {
 }
 
 prompt_for_config() {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
   echo "=== HestiaCP Backup Configuration ==="
   echo "(Brevo API Key will be passed via environment variable, not stored)"
   echo ""
