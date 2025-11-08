@@ -10,10 +10,11 @@ load_config() {
   fi
 }
 
-prompt_config() {
+prompt_for_config() {
   echo "=== HestiaCP Backup Configuration ==="
+  echo "(Brevo API Key will be passed via environment variable, not stored)"
+  echo ""
   
-  read -p "Enter Brevo API Key: " BREVO_API_KEY
   read -p "Enter S3 Bucket Name (e.g., gestalt.digital-ocean): " RCLONE_BUCKET
   read -p "Enter Rclone Remote Name (e.g., s3-gestalt): " RCLONE_REMOTE
   read -p "Enter Email Recipient (e.g., admin@example.com): " TO_EMAIL
@@ -21,25 +22,42 @@ prompt_config() {
   
   FROM_EMAIL="noreply@serveradmin.11massmedia.com"
   
-  cat > "$CONFIG_FILE" << EOF
-BREVO_API_KEY="$BREVO_API_KEY"
-RCLONE_BUCKET="$RCLONE_BUCKET"
-RCLONE_REMOTE="$RCLONE_REMOTE"
-TO_EMAIL="$TO_EMAIL"
-FROM_EMAIL="$FROM_EMAIL"
-SCHEDULE_LABEL="$SCHEDULE_LABEL"
-EOF
+  cat > "$CONFIG_FILE" << 'CONFIGEOF'
+RCLONE_BUCKET="BUCKET_PLACEHOLDER"
+RCLONE_REMOTE="REMOTE_PLACEHOLDER"
+TO_EMAIL="EMAIL_PLACEHOLDER"
+FROM_EMAIL="FROMEMAIL_PLACEHOLDER"
+SCHEDULE_LABEL="LABEL_PLACEHOLDER"
+CONFIGEOF
+
+  sed -i "s|BUCKET_PLACEHOLDER|$RCLONE_BUCKET|g" "$CONFIG_FILE"
+  sed -i "s|REMOTE_PLACEHOLDER|$RCLONE_REMOTE|g" "$CONFIG_FILE"
+  sed -i "s|EMAIL_PLACEHOLDER|$TO_EMAIL|g" "$CONFIG_FILE"
+  sed -i "s|FROMEMAIL_PLACEHOLDER|$FROM_EMAIL|g" "$CONFIG_FILE"
+  sed -i "s|LABEL_PLACEHOLDER|$SCHEDULE_LABEL|g" "$CONFIG_FILE"
   
   chmod 600 "$CONFIG_FILE"
   echo "Configuration saved to $CONFIG_FILE"
 }
 
+check_api_key() {
+  if [ -z "$BREVO_API_KEY" ]; then
+    read -p "Enter Brevo API Key: " BREVO_API_KEY
+    if [ -z "$BREVO_API_KEY" ]; then
+      echo "Error: Brevo API Key is required"
+      exit 1
+    fi
+  fi
+}
+
 load_config
 
-if [ -z "$BREVO_API_KEY" ]; then
-  prompt_config
+if [ -z "$RCLONE_BUCKET" ]; then
+  prompt_for_config
   load_config
 fi
+
+check_api_key
 
 TOTAL_USERS=0
 SUCCESSFUL_BACKUPS=0
