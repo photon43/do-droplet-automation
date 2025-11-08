@@ -28,14 +28,7 @@ log_message() {
 }
 
 get_real_users() {
-  ls /home | grep -v "^lost+found$" | while read user; do
-    if [ -f "/home/$user/conf/$user.conf" ]; then
-      WEB_DIR="/home/$user/web"
-      if [ -d "$WEB_DIR" ] && [ "$(ls -A $WEB_DIR 2>/dev/null)" ]; then
-        echo "$user"
-      fi
-    fi
-  done
+  v-list-users plain | grep -v "^root" | awk '{print $1}'
 }
 
 backup_user() {
@@ -89,49 +82,26 @@ send_email_report() {
   local total_duration=$((end_time - START_TIME))
   local total_size_gb=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024 / 1024" | bc)
   
-  local html_body="
-  <html>
-    <body style=\"font-family: Arial, sans-serif;\">
-      <h2>Automated Backup Report - $(hostname)</h2>
-      
-      <h3>Summary</h3>
-      <p>
-        <strong>Total Users Backed Up:</strong> $SUCCESSFUL_BACKUPS / $TOTAL_USERS<br>
-        <strong>Failed Backups:</strong> $FAILED_BACKUPS<br>
-        <strong>Total Data Transferred:</strong> ${total_size_gb}GB<br>
-        <strong>Duration:</strong> ${total_duration}s<br>
-        <strong>Date:</strong> $(date '+%Y-%m-%d %H:%M:%S UTC')
-      </p>
-      
-      <h3>Detailed Results</h3>
-      <table border=\"1\" cellpadding=\"10\" style=\"border-collapse: collapse;\">
-        <tr>
-          <th>User</th>
-          <th>Status</th>
-          <th>Size</th>
-          <th>Duration</th>
-        </tr>
-        $DETAILED_REPORT
-      </table>
-    </body>
-  </html>
-  "
+  local payload=$(cat <<EOF
+{
+  "sender": {
+    "name": "Backup Automation",
+    "email": "$FROM_EMAIL"
+  },
+  "to": [{
+    "email": "$TO_EMAIL"
+  }],
+  "subject": "Backup Report - $(hostname) - $SUCCESSFUL_BACKUPS/$TOTAL_USERS Successful",
+  "htmlContent": "<html><body><h2>Automated Backup Report - $(hostname)</h2><h3>Summary</h3><p><strong>Total Users Backed Up:</strong> $SUCCESSFUL_BACKUPS / $TOTAL_USERS<br><strong>Failed Backups:</strong> $FAILED_BACKUPS<br><strong>Total Data Transferred:</strong> ${total_size_gb}GB<br><strong>Duration:</strong> ${total_duration}s<br><strong>Date:</strong> $(date '+%Y-%m-%d %H:%M:%S UTC')</p><h3>Detailed Results</h3><table border=\"1\" cellpadding=\"10\"><tr><th>User</th><th>Status</th><th>Size</th><th>Duration</th></tr>$DETAILED_REPORT</table></body></html>"
+}
+EOF
+)
   
   curl -X POST https://api.brevo.com/v3/smtp/email \
     -H "accept: application/json" \
     -H "api-key: $BREVO_API_KEY" \
     -H "Content-Type: application/json" \
-    -d "{
-      \"sender\": {
-        \"name\": \"Backup Automation\",
-        \"email\": \"$FROM_EMAIL\"
-      },
-      \"to\": [{
-        \"email\": \"$TO_EMAIL\"
-      }],
-      \"subject\": \"Backup Report - $(hostname) - $SUCCESSFUL_BACKUPS/$TOTAL_USERS Successful\",
-      \"htmlContent\": \"$html_body\"
-    }" > /dev/null 2>&1
+    -d "$payload"
   
   log_message "Email report sent to: $TO_EMAIL"
 }
