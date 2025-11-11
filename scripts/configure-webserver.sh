@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configure Web Server for Large Database Imports
-# Sets PHP, Apache, and Nginx timeouts and limits
+# Sets PHP, Apache, Nginx, and MySQL timeouts and limits
 # Run after HestiaCP installation
 # Usage: bash configure-webserver.sh
 
@@ -14,7 +14,7 @@ log_print() {
 }
 
 log_print "=== Starting Web Server Configuration ==="
-log_print "Configuring PHP, Apache, and Nginx for large imports"
+log_print "Configuring PHP, Apache, Nginx, and MySQL for large imports"
 log_print "Log file: $LOGFILE"
 log_print ""
 
@@ -136,6 +136,32 @@ else
     log_print "✗ Nginx config not found at $NGINX_CONF"
 fi
 
+# MySQL/MariaDB Configuration
+log_print "Configuring MySQL/MariaDB..."
+
+MYSQL_CONF="/etc/mysql/mariadb.conf.d/50-server.cnf"
+
+if [ -f "$MYSQL_CONF" ]; then
+    # Backup original
+    cp "$MYSQL_CONF" "${MYSQL_CONF}.backup" >> "$LOGFILE" 2>&1
+    
+    # Check if timeout settings already exist
+    if ! grep -q "wait_timeout = " "$MYSQL_CONF"; then
+        # Append settings to config file
+        cat >> "$MYSQL_CONF" << 'MYSQL_EOF'
+
+# Connection timeout settings (prevents premature connection drops under load)
+wait_timeout = 28800
+interactive_timeout = 28800
+MYSQL_EOF
+        log_print "✓ MySQL timeout settings added"
+    else
+        log_print "✓ MySQL timeout settings already configured"
+    fi
+else
+    log_print "✗ MySQL config not found at $MYSQL_CONF"
+fi
+
 # Restart services
 log_print ""
 log_print "Restarting services..."
@@ -161,6 +187,13 @@ else
     log_print "✗ Failed to restart Nginx"
 fi
 
+systemctl restart mysql >> "$LOGFILE" 2>&1
+if [ $? -eq 0 ]; then
+    log_print "✓ MySQL restarted"
+else
+    log_print "✗ Failed to restart MySQL"
+fi
+
 log_print ""
 log_print "=== Web Server Configuration Complete ==="
 log_print ""
@@ -169,6 +202,7 @@ log_print "  PHP-FPM: upload_max_filesize=512M, post_max_size=512M, max_executio
 log_print "  PHP-CLI: upload_max_filesize=512M, post_max_size=512M, max_execution_time=300, max_input_time=300"
 log_print "  Apache: TimeOut=600"
 log_print "  Nginx: proxy_read_timeout=600s, proxy_connect_timeout=600s, send_timeout=600s"
+log_print "  MySQL: wait_timeout=28800, interactive_timeout=28800"
 log_print ""
 log_print "Log file: $LOGFILE"
 log_print ""
