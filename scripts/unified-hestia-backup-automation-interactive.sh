@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# Unified HestiaCP Backup Automation v2.0
+# Unified HestiaCP Backup Automation v2.1
 # Automated backup and cleanup with S3/Rclone and Brevo email notifications
+# Automatically fixes HestiaCP config to prevent retention issues
 # Run after HestiaCP installation and Rclone configuration
-# Usage: ./unified-hestia-backup-automation.sh [backup|cleanup]
+# Usage: ./unified-hestia-backup-automation-interactive.sh [backup|cleanup]
 
 # DO NOT exit on errors - we handle them individually
 set +e
@@ -70,12 +71,55 @@ check_dependencies() {
   fi
 }
 
+# Fix HestiaCP configuration to prevent retention issues
+fix_hestia_config() {
+  log_print ""
+  log_print "${YELLOW}Checking HestiaCP configuration...${NC}"
+
+  local changes_made=0
+
+  # Fix 1: Remove rclone from BACKUP_SYSTEM so only our script manages S3
+  local current_backup_system=$(grep "^BACKUP_SYSTEM=" /usr/local/hestia/conf/hestia.conf | cut -d"'" -f2)
+
+  if [[ "$current_backup_system" == *"rclone"* ]]; then
+    log_print "${YELLOW}→ Fixing BACKUP_SYSTEM (removing rclone - our script will manage S3)${NC}"
+    sed -i "s/BACKUP_SYSTEM='rclone,local'/BACKUP_SYSTEM='local'/" /usr/local/hestia/conf/hestia.conf
+    sed -i "s/BACKUP_SYSTEM='local,rclone'/BACKUP_SYSTEM='local'/" /usr/local/hestia/conf/hestia.conf
+    changes_made=1
+  fi
+
+  # Fix 2: Set user backup quota to 10 (not 1) to allow multiple backups
+  local users=$(/usr/local/hestia/bin/v-list-users plain | grep -v "^root" | awk '{print $1}')
+
+  for user in $users; do
+    local user_conf="/usr/local/hestia/data/users/$user/user.conf"
+
+    if [ -f "$user_conf" ]; then
+      local current_backups=$(grep "^BACKUPS=" "$user_conf" | cut -d"'" -f2)
+
+      if [ "$current_backups" = "1" ]; then
+        log_print "${YELLOW}→ Fixing backup quota for user: $user (1 → 10 backups)${NC}"
+        sed -i "s/BACKUPS='1'/BACKUPS='10'/" "$user_conf"
+        sed -i "s/U_BACKUPS='1'/U_BACKUPS='10'/" "$user_conf"
+        changes_made=1
+      fi
+    fi
+  done
+
+  if [ $changes_made -eq 1 ]; then
+    log_print "${GREEN}✓ HestiaCP configuration fixed${NC}"
+  else
+    log_print "${GREEN}✓ HestiaCP configuration already correct${NC}"
+  fi
+  log_print ""
+}
+
 setup_interactive() {
   mkdir -p "$(dirname "$CONFIG_FILE")"
   mkdir -p "/var/log/hestia"
 
   log_print "${GREEN}================================================${NC}"
-  log_print "${GREEN}  HestiaCP Backup Automation Setup v2.0${NC}"
+  log_print "${GREEN}  HestiaCP Backup Automation Setup v2.1${NC}"
   log_print "${GREEN}================================================${NC}"
   log_print ""
 
@@ -86,6 +130,9 @@ setup_interactive() {
   read -p "Enter Schedule Label (optional, e.g., production): " SCHEDULE_LABEL
   read -sp "Enter Brevo API Key: " BREVO_API_KEY
   echo ""
+
+  # Fix HestiaCP configuration before saving our config
+  fix_hestia_config
 
   FROM_EMAIL="noreply@serveradmin.11massmedia.com"
 
@@ -106,18 +153,18 @@ EOF
   log_print "${GREEN}✓ Configuration saved securely${NC}"
   log_print ""
   log_print "Setup complete! Next steps:"
-  log_print "  1. Test backup: $0 backup"
-  log_print "  2. Test cleanup: $0 cleanup"
-  log_print "  3. Add to crontab (Saturday only at 7 AM / 10 AM UTC):"
+  log_print "  1. Disable HestiaCP's built-in backup cron:"
+  log_print "     sed -i 's|10 05 \* \* \* sudo /usr/local/hestia/bin/v-backup-users|#10 05 \* \* \* sudo /usr/local/hestia/bin/v-backup-users|' /var/spool/cron/crontabs/hestiaweb"
   log_print ""
+  log_print "  2. Test backup: $0 backup"
+  log_print "  3. Test cleanup: $0 cleanup"
+  log_print ""
+  log_print "  4. Add to crontab (Saturday only at 7 AM / 10 AM UTC):"
   log_print "     crontab -e"
   log_print ""
   log_print "     Add these lines:"
   log_print "     0 7 * * 6 $0 backup >> /var/log/hestia/backup-automation.log 2>&1"
   log_print "     0 10 * * 6 $0 cleanup >> /var/log/hestia/cleanup-automation.log 2>&1"
-  log_print ""
-  log_print "${YELLOW}IMPORTANT: Disable HestiaCP's built-in backup to avoid conflicts!${NC}"
-  log_print "  Run: sed -i 's|10 05 \* \* \* sudo /usr/local/hestia/bin/v-backup-users|#10 05 \* \* \* sudo /usr/local/hestia/bin/v-backup-users|' /var/spool/cron/crontabs/hestiaweb"
   log_print ""
 }
 
@@ -188,7 +235,7 @@ send_backup_email() {
   local payload=$(cat <<'PAYLOAD'
 {
   "sender": {
-    "name": "Backup Automation v2.0",
+    "name": "Backup Automation v2.1",
     "email": "X_FROM_EMAIL"
   },
   "to": [{
@@ -267,7 +314,7 @@ send_cleanup_email() {
   local payload=$(cat <<'PAYLOAD'
 {
   "sender": {
-    "name": "Backup Cleanup v2.0",
+    "name": "Backup Cleanup v2.1",
     "email": "X_FROM_EMAIL"
   },
   "to": [{
@@ -300,7 +347,7 @@ PAYLOAD
 
 run_backup() {
   log_backup "=========================================="
-  log_backup "Starting automated backup cycle (v2.0)"
+  log_backup "Starting automated backup cycle (v2.1)"
   log_backup "=========================================="
 
   TOTAL_USERS=0
@@ -329,7 +376,7 @@ run_backup() {
 
 run_cleanup() {
   log_cleanup "=========================================="
-  log_cleanup "Starting backup cleanup cycle (v2.0)"
+  log_cleanup "Starting backup cleanup cycle (v2.1)"
   log_cleanup "=========================================="
 
   TOTAL_DELETED=0
