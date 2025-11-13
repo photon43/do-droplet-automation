@@ -146,20 +146,11 @@ if [ $? -ne 0 ]; then
     log_print "${RED}✗ Failed to install debsums${NC}"
     exit 1
 fi
-debsums_init >> "$LOGFILE" 2>&1 || true
+debsums_init >> "$LOGFILE" 2>&1 || log_print "${YELLOW}Note: debsums_init not available (non-critical)${NC}"
 log_print "${GREEN}✓ debsums installed${NC}"
 
-# Step 11: Install PAM password strength module
-log_print "${YELLOW}[11/18] Installing PAM password strength module...${NC}"
-apt-get install -y libpam-cracklib >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install pam_cracklib${NC}"
-    exit 1
-fi
-log_print "${GREEN}✓ PAM password strength module installed${NC}"
-
-# Step 12: Install UFW firewall
-log_print "${YELLOW}[12/18] Installing UFW firewall...${NC}"
+# Step 11: Install UFW firewall
+log_print "${YELLOW}[11/18] Installing UFW firewall...${NC}"
 apt-get install -y ufw >> "$LOGFILE" 2>&1
 if [ $? -ne 0 ]; then
     log_print "${RED}✗ Failed to install UFW${NC}"
@@ -175,8 +166,8 @@ ufw allow 80/tcp >> "$LOGFILE" 2>&1  # HTTP
 ufw allow 443/tcp >> "$LOGFILE" 2>&1 # HTTPS
 log_print "${GREEN}✓ UFW firewall installed and configured${NC}"
 
-# Step 13: Configure SSH hardening
-log_print "${YELLOW}[13/18] Hardening SSH configuration...${NC}"
+# Step 12: Configure SSH hardening
+log_print "${YELLOW}[12/17] Hardening SSH configuration...${NC}"
 if [ -f /etc/ssh/sshd_config ]; then
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup >> "$LOGFILE" 2>&1
     
@@ -206,8 +197,8 @@ else
     log_print "${RED}✗ SSH config not found${NC}"
 fi
 
-# Step 14: Disable unnecessary network protocols
-log_print "${YELLOW}[14/18] Disabling unnecessary network protocols...${NC}"
+# Step 13: Disable unnecessary network protocols
+log_print "${YELLOW}[13/17] Disabling unnecessary network protocols...${NC}"
 cat > /etc/modprobe.d/disable-protocols.conf << 'EOF'
 # Disable uncommon network protocols
 install dccp /bin/true
@@ -217,8 +208,8 @@ install tipc /bin/true
 EOF
 log_print "${GREEN}✓ Network protocols disabled (dccp, sctp, rds, tipc)${NC}"
 
-# Step 15: Configure kernel parameters (sysctl hardening)
-log_print "${YELLOW}[15/18] Hardening kernel parameters (sysctl)...${NC}"
+# Step 14: Configure kernel parameters (sysctl hardening)
+log_print "${YELLOW}[14/17] Hardening kernel parameters (sysctl)...${NC}"
 cat > /etc/sysctl.d/99-hardening.conf << 'EOF'
 # Kernel hardening parameters
 
@@ -281,8 +272,8 @@ EOF
 sysctl -p /etc/sysctl.d/99-hardening.conf >> "$LOGFILE" 2>&1
 log_print "${GREEN}✓ Kernel parameters hardened${NC}"
 
-# Step 16: Configure login.defs security
-log_print "${YELLOW}[16/18] Configuring /etc/login.defs security parameters...${NC}"
+# Step 15: Configure login.defs security
+log_print "${YELLOW}[15/17] Configuring /etc/login.defs security parameters...${NC}"
 if [ -f /etc/login.defs ]; then
     cp /etc/login.defs /etc/login.defs.backup >> "$LOGFILE" 2>&1
     
@@ -302,8 +293,8 @@ else
     log_print "${RED}✗ login.defs not found${NC}"
 fi
 
-# Step 17: Disable core dumps
-log_print "${YELLOW}[17/18] Disabling core dumps...${NC}"
+# Step 16: Disable core dumps
+log_print "${YELLOW}[16/17] Disabling core dumps...${NC}"
 cat > /etc/security/limits.d/99-coredump.conf << 'EOF'
 # Disable core dumps
 * soft core 0
@@ -311,8 +302,8 @@ cat > /etc/security/limits.d/99-coredump.conf << 'EOF'
 EOF
 log_print "${GREEN}✓ Core dumps disabled${NC}"
 
-# Step 18: Run initial security audit
-log_print "${YELLOW}[18/18] Running initial security audit...${NC}"
+# Step 17: Run initial security audit
+log_print "${YELLOW}[17/17] Running initial security audit...${NC}"
 lynis audit system --quick >> "$LOGFILE" 2>&1 || true
 log_print "${GREEN}✓ Security audit complete${NC}"
 
@@ -329,7 +320,6 @@ log_print "  ✓ fail2ban - Brute force protection (jail.local created)"
 log_print "  ✓ rkhunter - Rootkit detection"
 log_print "  ✓ chkrootkit - Rootkit detection"
 log_print "  ✓ libpam-tmpdir - Temporary directory isolation"
-log_print "  ✓ libpam-cracklib - Password strength enforcement"
 log_print "  ✓ apt-show-versions - Patch management"
 log_print "  ✓ Logwatch - Log monitoring"
 log_print "  ✓ Lynis - Security auditing"
