@@ -1,5 +1,23 @@
 #!/bin/bash
 
+# Unified HestiaCP Backup Automation v2.0
+# Automated backup and cleanup with S3/Rclone and Brevo email notifications
+# Run after HestiaCP installation and Rclone configuration
+# Usage: ./unified-hestia-backup-automation.sh [backup|cleanup]
+
+# DO NOT exit on errors - we handle them individually
+set +e
+
+# Suppress interactive prompts
+export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_PRIORITY=critical
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
 CONFIG_FILE="/etc/hestia/backup.conf"
 BREVO_KEY_FILE="/etc/hestia/brevo.key"
 BACKUP_LOG="/var/log/hestia/backup-automation.log"
@@ -7,6 +25,11 @@ CLEANUP_LOG="/var/log/hestia/cleanup-automation.log"
 BACKUP_DIR="/backup"
 
 MODE=${1:-}
+
+# Function to log output with color
+log_print() {
+    echo -e "$1"
+}
 
 load_config() {
   if [ -f "$CONFIG_FILE" ]; then
@@ -20,11 +43,42 @@ load_api_key() {
   fi
 }
 
+# Check dependencies
+check_dependencies() {
+  local missing=0
+
+  # Check for bc (used for calculations)
+  if ! command -v bc &> /dev/null; then
+    log_print "${RED}✗ Error: 'bc' command not found. Install with: apt-get install bc${NC}"
+    missing=1
+  fi
+
+  # Check for rclone
+  if ! command -v rclone &> /dev/null; then
+    log_print "${RED}✗ Error: 'rclone' command not found. Is Rclone installed?${NC}"
+    missing=1
+  fi
+
+  # Check for HestiaCP commands
+  if [ ! -f "/usr/local/hestia/bin/v-list-users" ]; then
+    log_print "${RED}✗ Error: HestiaCP not found. Is HestiaCP installed?${NC}"
+    missing=1
+  fi
+
+  if [ $missing -eq 1 ]; then
+    exit 1
+  fi
+}
+
 setup_interactive() {
   mkdir -p "$(dirname "$CONFIG_FILE")"
-  echo "=== HestiaCP Backup Automation Setup ==="
-  echo ""
-  
+  mkdir -p "/var/log/hestia"
+
+  log_print "${GREEN}================================================${NC}"
+  log_print "${GREEN}  HestiaCP Backup Automation Setup v2.0${NC}"
+  log_print "${GREEN}================================================${NC}"
+  log_print ""
+
   read -p "Enter S3 Bucket Name (e.g., gestalt.digital-ocean): " RCLONE_BUCKET
   read -p "Enter Rclone Remote Name (e.g., s3-gestalt): " RCLONE_REMOTE
   read -p "Enter Email Recipient (e.g., admin@example.com): " TO_EMAIL
@@ -32,9 +86,9 @@ setup_interactive() {
   read -p "Enter Schedule Label (optional, e.g., production): " SCHEDULE_LABEL
   read -sp "Enter Brevo API Key: " BREVO_API_KEY
   echo ""
-  
+
   FROM_EMAIL="noreply@serveradmin.11massmedia.com"
-  
+
   tee "$CONFIG_FILE" > /dev/null <<EOF
 RCLONE_BUCKET="$RCLONE_BUCKET"
 RCLONE_REMOTE="$RCLONE_REMOTE"
@@ -47,8 +101,24 @@ EOF
   echo "$BREVO_API_KEY" > "$BREVO_KEY_FILE"
   chmod 600 "$CONFIG_FILE"
   chmod 600 "$BREVO_KEY_FILE"
-  
-  echo "Configuration saved securely"
+
+  log_print ""
+  log_print "${GREEN}✓ Configuration saved securely${NC}"
+  log_print ""
+  log_print "Setup complete! Next steps:"
+  log_print "  1. Test backup: $0 backup"
+  log_print "  2. Test cleanup: $0 cleanup"
+  log_print "  3. Add to crontab (Saturday only at 7 AM / 10 AM UTC):"
+  log_print ""
+  log_print "     crontab -e"
+  log_print ""
+  log_print "     Add these lines:"
+  log_print "     0 7 * * 6 $0 backup >> /var/log/hestia/backup-automation.log 2>&1"
+  log_print "     0 10 * * 6 $0 cleanup >> /var/log/hestia/cleanup-automation.log 2>&1"
+  log_print ""
+  log_print "${YELLOW}IMPORTANT: Disable HestiaCP's built-in backup to avoid conflicts!${NC}"
+  log_print "  Run: sed -i 's|10 05 \* \* \* sudo /usr/local/hestia/bin/v-backup-users|#10 05 \* \* \* sudo /usr/local/hestia/bin/v-backup-users|' /var/spool/cron/crontabs/hestiaweb"
+  log_print ""
 }
 
 log_backup() {
@@ -62,36 +132,36 @@ log_cleanup() {
 }
 
 get_real_users() {
-  v-list-users plain | grep -v "^root" | awk '{print $1}'
+  /usr/local/hestia/bin/v-list-users plain | grep -v "^root" | awk '{print $1}'
 }
 
 backup_user() {
   local user=$1
   local start_backup=$(date +%s)
-  
+
   log_backup "Starting backup for user: $user"
-  
+
   /usr/local/hestia/bin/v-backup-user "$user" > /dev/null 2>&1
-  
+
   if [ $? -eq 0 ]; then
     RECENT_BACKUP=$(ls -t "$BACKUP_DIR"/${user}.*.tar 2>/dev/null | head -1)
-    
+
     if [ -f "$RECENT_BACKUP" ]; then
       BACKUP_SIZE=$(du -h "$RECENT_BACKUP" | cut -f1)
       BACKUP_SIZE_BYTES=$(du -b "$RECENT_BACKUP" | cut -f1)
       TOTAL_SIZE=$((TOTAL_SIZE + BACKUP_SIZE_BYTES))
-      
+
       rclone copy "$RECENT_BACKUP" "$RCLONE_REMOTE:$RCLONE_BUCKET/" --progress > /dev/null 2>&1
-      
+
       if [ $? -eq 0 ]; then
         log_backup "✓ Backup successful: $user (Size: $BACKUP_SIZE)"
         rm "$RECENT_BACKUP"
         log_backup "✓ Local backup deleted: $user"
         SUCCESSFUL_BACKUPS=$((SUCCESSFUL_BACKUPS + 1))
-        
+
         END_BACKUP=$(date +%s)
         BACKUP_DURATION=$((END_BACKUP - start_backup))
-        
+
         BACKUP_DETAILS="$BACKUP_DETAILS<tr><td><strong>$user</strong></td><td>✓ Success</td><td>$BACKUP_SIZE</td><td>${BACKUP_DURATION}s</td></tr>"
       else
         log_backup "✗ S3 upload failed: $user"
@@ -114,11 +184,11 @@ send_backup_email() {
   local end_time=$(date +%s)
   local total_duration=$((end_time - BACKUP_START_TIME))
   local total_size_gb=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024 / 1024" | bc)
-  
+
   local payload=$(cat <<'PAYLOAD'
 {
   "sender": {
-    "name": "Backup Automation",
+    "name": "Backup Automation v2.0",
     "email": "X_FROM_EMAIL"
   },
   "to": [{
@@ -129,7 +199,7 @@ send_backup_email() {
 }
 PAYLOAD
 )
-  
+
   payload="${payload//X_FROM_EMAIL/$FROM_EMAIL}"
   payload="${payload//X_TO_EMAIL/$TO_EMAIL}"
   payload="${payload//X_HOSTNAME/$(hostname)}"
@@ -140,69 +210,64 @@ PAYLOAD
   payload="${payload//X_DURATION/$total_duration}"
   payload="${payload//X_DATE/$(date '+%Y-%m-%d %H:%M:%S UTC')}"
   payload="${payload//X_DETAILS/$BACKUP_DETAILS}"
-  
+
   curl -X POST https://api.brevo.com/v3/smtp/email \
     -H "accept: application/json" \
     -H "api-key: $BREVO_API_KEY" \
     -H "Content-Type: application/json" \
     -d "$payload" > /dev/null 2>&1
-  
+
   log_backup "Email report sent to: $TO_EMAIL"
 }
 
 cleanup_user_backups() {
   local user=$1
-  local user_deleted=0
-  local user_size=0
-  
+
   log_cleanup "Scanning backups for user: $user"
-  
-  rclone ls "$RCLONE_REMOTE:$RCLONE_BUCKET/" 2>/dev/null | grep " ${user}\." | while read -r size filename; do
+
+  # Use process substitution instead of pipe to preserve variables
+  while read -r size filename; do
     local file_date=$(echo "$filename" | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
-    
+
     if [ -z "$file_date" ]; then
       continue
     fi
-    
+
     local file_epoch=$(date -d "$file_date" +%s 2>/dev/null || echo "0")
     if [ "$file_epoch" = "0" ]; then
       continue
     fi
-    
+
     local current_epoch=$(date +%s)
     local age_seconds=$((current_epoch - file_epoch))
     local age_days=$((age_seconds / 86400))
-    
+
     if [ $age_days -gt $RETENTION_DAYS ]; then
       local size_mb=$((size / 1024 / 1024))
       log_cleanup "  → Deleting: $filename (age: ${age_days}d, size: ${size_mb}MB)"
-      
+
       if rclone delete "$RCLONE_REMOTE:$RCLONE_BUCKET/$filename" 2>/dev/null; then
         TOTAL_DELETED=$((TOTAL_DELETED + 1))
         TOTAL_SIZE_FREED=$((TOTAL_SIZE_FREED + size))
-        user_deleted=$((user_deleted + 1))
-        user_size=$((user_size + size))
+
+        local user_size_mb=$((size / 1024 / 1024))
+        CLEANUP_DETAILS="$CLEANUP_DETAILS<tr><td><strong>$user</strong></td><td>Deleted 1 file</td><td>${user_size_mb}MB</td></tr>"
       else
         log_cleanup "  ✗ Failed to delete: $filename"
       fi
     fi
-  done
-  
-  if [ $user_deleted -gt 0 ]; then
-    local user_size_mb=$((user_size / 1024 / 1024))
-    CLEANUP_DETAILS="$CLEANUP_DETAILS<tr><td><strong>$user</strong></td><td>Deleted: $user_deleted</td><td>${user_size_mb}MB</td></tr>"
-  fi
+  done < <(rclone ls "$RCLONE_REMOTE:$RCLONE_BUCKET/" 2>/dev/null | grep " ${user}\.")
 }
 
 send_cleanup_email() {
   local end_time=$(date +%s)
   local total_duration=$((end_time - CLEANUP_START_TIME))
   local total_size_gb=$(echo "scale=2; $TOTAL_SIZE_FREED / 1024 / 1024 / 1024" | bc)
-  
+
   local payload=$(cat <<'PAYLOAD'
 {
   "sender": {
-    "name": "Backup Cleanup",
+    "name": "Backup Cleanup v2.0",
     "email": "X_FROM_EMAIL"
   },
   "to": [{
@@ -213,7 +278,7 @@ send_cleanup_email() {
 }
 PAYLOAD
 )
-  
+
   payload="${payload//X_FROM_EMAIL/$FROM_EMAIL}"
   payload="${payload//X_TO_EMAIL/$TO_EMAIL}"
   payload="${payload//X_HOSTNAME/$(hostname)}"
@@ -223,39 +288,39 @@ PAYLOAD
   payload="${payload//X_DURATION/$total_duration}"
   payload="${payload//X_DATE/$(date '+%Y-%m-%d %H:%M:%S UTC')}"
   payload="${payload//X_DETAILS/$CLEANUP_DETAILS}"
-  
+
   curl -X POST https://api.brevo.com/v3/smtp/email \
     -H "accept: application/json" \
     -H "api-key: $BREVO_API_KEY" \
     -H "Content-Type: application/json" \
     -d "$payload" > /dev/null 2>&1
-  
+
   log_cleanup "Email report sent to: $TO_EMAIL"
 }
 
 run_backup() {
   log_backup "=========================================="
-  log_backup "Starting automated backup cycle"
+  log_backup "Starting automated backup cycle (v2.0)"
   log_backup "=========================================="
-  
+
   TOTAL_USERS=0
   SUCCESSFUL_BACKUPS=0
   FAILED_BACKUPS=0
   TOTAL_SIZE=0
   BACKUP_START_TIME=$(date +%s)
   BACKUP_DETAILS=""
-  
+
   while read user; do
     TOTAL_USERS=$((TOTAL_USERS + 1))
     backup_user "$user"
   done < <(get_real_users)
-  
+
   if [ $TOTAL_USERS -eq 0 ]; then
     log_backup "No users with domains found. Skipping backup cycle."
   else
     send_backup_email
   fi
-  
+
   log_backup "=========================================="
   log_backup "Backup cycle complete"
   log_backup "Success: $SUCCESSFUL_BACKUPS | Failed: $FAILED_BACKUPS"
@@ -264,30 +329,43 @@ run_backup() {
 
 run_cleanup() {
   log_cleanup "=========================================="
-  log_cleanup "Starting backup cleanup cycle"
+  log_cleanup "Starting backup cleanup cycle (v2.0)"
   log_cleanup "=========================================="
-  
+
   TOTAL_DELETED=0
   TOTAL_SIZE_FREED=0
   CLEANUP_START_TIME=$(date +%s)
   CLEANUP_DETAILS=""
-  
+
   while read user; do
     cleanup_user_backups "$user"
   done < <(get_real_users)
-  
+
   send_cleanup_email
-  
+
   log_cleanup "=========================================="
   log_cleanup "Cleanup cycle complete"
   log_cleanup "Total Deleted: $TOTAL_DELETED | Space Freed: $(echo "scale=2; $TOTAL_SIZE_FREED / 1024 / 1024 / 1024" | bc)GB"
   log_cleanup "=========================================="
 }
 
-if [ -z "$MODE" ] || [ -z "$CONFIG_FILE" ] || ! [ -f "$CONFIG_FILE" ]; then
-  setup_interactive
-  exit 0
+# Main execution
+if [ -z "$MODE" ]; then
+  if [ ! -f "$CONFIG_FILE" ]; then
+    setup_interactive
+    exit 0
+  else
+    echo "Usage: $0 [backup|cleanup]"
+    echo ""
+    echo "Configuration exists. Run:"
+    echo "  $0 backup  - Run backup cycle"
+    echo "  $0 cleanup - Run cleanup cycle"
+    exit 1
+  fi
 fi
+
+# Check dependencies before running
+check_dependencies
 
 load_config
 load_api_key
