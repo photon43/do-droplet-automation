@@ -63,7 +63,7 @@ log_print "${GREEN}✓ Postfix removed${NC}"
 
 # Step 3: Install automatic security updates
 log_print "${YELLOW}[3/18] Installing automatic security updates...${NC}"
-apt-get install -y unattended-upgrades apt-listchanges apt-listbugs >> "$LOGFILE" 2>&1
+apt-get install -y unattended-upgrades apt-listchanges >> "$LOGFILE" 2>&1
 if [ $? -ne 0 ]; then
     log_print "${RED}✗ Failed to install unattended-upgrades${NC}"
     exit 1
@@ -78,7 +78,7 @@ EOF
 
 systemctl enable unattended-upgrades >> "$LOGFILE" 2>&1
 systemctl start unattended-upgrades >> "$LOGFILE" 2>&1
-log_print "${GREEN}✓ Automatic security updates enabled (including apt-listbugs)${NC}"
+log_print "${GREEN}✓ Automatic security updates enabled${NC}"
 
 # Step 4: Install brute force protection
 log_print "${YELLOW}[4/18] Installing fail2ban for brute force protection...${NC}"
@@ -324,7 +324,7 @@ log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Summary of installed and configured tools:"
 log_print "  ✓ unattended-upgrades - Automatic security updates"
-log_print "  ✓ apt-listbugs - Critical bug detection"
+log_print "  ✓ apt-listchanges - Package change notifications"
 log_print "  ✓ fail2ban - Brute force protection (jail.local created)"
 log_print "  ✓ rkhunter - Rootkit detection"
 log_print "  ✓ chkrootkit - Rootkit detection"
