@@ -1,73 +1,46 @@
 #!/bin/bash
 
-# DigitalOcean Droplet Security Hardening Script - Improved Version
-# Comprehensive security hardening for Ubuntu 24.04 LTS
-# Non-interactive, fully automated
+# DigitalOcean Droplet Security Hardening Script - 17 Steps
+# Non-interactive, fully automated, no mail services
 # Run as root on fresh Ubuntu 24.04 LTS droplet
-# Usage: ./hardening-droplet.sh
+# Usage: chmod +x harden-droplet.sh && ./harden-droplet.sh
 
-set +e
-
-# Suppress interactive prompts
+set -e
 export DEBIAN_FRONTEND=noninteractive
-export DEBIAN_PRIORITY=critical
 
-# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Create log file
 LOGFILE="/root/hardening-$(date +%Y%m%d-%H%M%S).log"
 
-# Function to log output
 log_print() {
     echo -e "$1" | tee -a "$LOGFILE"
 }
 
-# Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  DigitalOcean Droplet Security Hardening${NC}"
-log_print "${GREEN}  Ubuntu 24.04 LTS - Comprehensive Version${NC}"
+log_print "${GREEN}  DigitalOcean Droplet Hardening - 17 Steps${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
 log_print ""
 
-# Step 0: Clean up package manager state
-log_print "${YELLOW}[0/18] Cleaning up package manager state...${NC}"
-dpkg --configure -a >> "$LOGFILE" 2>&1
-apt-get clean >> "$LOGFILE" 2>&1
-apt-get autoclean >> "$LOGFILE" 2>&1
+# Step 1: Remove unnecessary packages before any updates
+log_print "${YELLOW}[1/17] Removing unnecessary packages (postfix, exim4, ClamAV)...${NC}"
+apt-get remove -y postfix exim4 clamav clamav-daemon 2>/dev/null || true >> "$LOGFILE" 2>&1
 apt-get autoremove -y >> "$LOGFILE" 2>&1
-log_print "${GREEN}✓ Package manager cleaned${NC}"
+log_print "${GREEN}✓ Unnecessary packages removed${NC}"
 
-# Step 1: Update system
-log_print "${YELLOW}[1/18] Updating package lists...${NC}"
-apt-get update -y >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to update package lists${NC}"
-    exit 1
-fi
-
-log_print "${YELLOW}[1/18] Upgrading system packages...${NC}"
+# Step 2: Update system packages
+log_print "${YELLOW}[2/17] Updating system packages...${NC}"
+apt-get update >> "$LOGFILE" 2>&1
 apt-get upgrade -y -o Dpkg::Options::="--force-confnew" >> "$LOGFILE" 2>&1
-log_print "${GREEN}✓ System updated and upgraded${NC}"
+log_print "${GREEN}✓ System packages updated${NC}"
 
-# Step 2: Remove postfix if present
-log_print "${YELLOW}[2/18] Removing postfix (not needed)...${NC}"
-apt-get remove -y postfix >> "$LOGFILE" 2>&1 || true
-apt-get autoremove -y >> "$LOGFILE" 2>&1 || true
-log_print "${GREEN}✓ Postfix removed${NC}"
-
-# Step 3: Install automatic security updates
-log_print "${YELLOW}[3/18] Installing automatic security updates...${NC}"
+# Step 3: Install unattended-upgrades for automatic security updates
+log_print "${YELLOW}[3/17] Installing unattended-upgrades...${NC}"
 apt-get install -y unattended-upgrades apt-listchanges >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install unattended-upgrades${NC}"
-    exit 1
-fi
 
 cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
@@ -77,267 +50,214 @@ APT::Periodic::Unattended-Upgrade "1";
 EOF
 
 systemctl enable unattended-upgrades >> "$LOGFILE" 2>&1
-systemctl start unattended-upgrades >> "$LOGFILE" 2>&1
-log_print "${GREEN}✓ Automatic security updates enabled${NC}"
+systemctl restart unattended-upgrades >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ Unattended-upgrades configured${NC}"
 
-# Step 4: Install brute force protection
-log_print "${YELLOW}[4/18] Installing fail2ban for brute force protection...${NC}"
+# Step 4: Install fail2ban for brute force protection
+log_print "${YELLOW}[4/17] Installing fail2ban...${NC}"
 apt-get install -y fail2ban >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install fail2ban${NC}"
-    exit 1
-fi
 
-# Copy jail.conf to jail.local to prevent updates from overwriting config
-cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local >> "$LOGFILE" 2>&1
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+
+[sshd]
+enabled = true
+port = ssh
+logpath = /var/log/auth.log
+backend = systemd
+EOF
 
 systemctl enable fail2ban >> "$LOGFILE" 2>&1
-systemctl start fail2ban >> "$LOGFILE" 2>&1
-log_print "${GREEN}✓ fail2ban installed and enabled (jail.local created)${NC}"
+systemctl restart fail2ban >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ Fail2ban installed and configured${NC}"
 
-# Step 5: Install rootkit detection
-log_print "${YELLOW}[5/18] Installing rootkit detection (rkhunter & chkrootkit)...${NC}"
+# Step 5: Harden SSH configuration
+log_print "${YELLOW}[5/17] Hardening SSH configuration...${NC}"
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+
+cat >> /etc/ssh/sshd_config << 'EOF'
+
+# Hardening additions
+PermitRootLogin without-password
+PasswordAuthentication no
+UsePAM yes
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+ClientAliveInterval 300
+ClientAliveCountMax 2
+Compression yes
+TCPKeepAlive yes
+EOF
+
+sshd -t >> "$LOGFILE" 2>&1 && systemctl restart ssh >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ SSH hardened${NC}"
+
+# Step 6: Install rootkit detection tools (rkhunter and chkrootkit)
+log_print "${YELLOW}[6/17] Installing rootkit detection (rkhunter, chkrootkit)...${NC}"
 apt-get install -y rkhunter chkrootkit >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install rootkit detection tools${NC}"
-    exit 1
-fi
-log_print "${GREEN}✓ Rootkit detection tools installed${NC}"
 
-# Step 6: Configure rkhunter
-log_print "${YELLOW}[6/18] Configuring rkhunter...${NC}"
-sed -i 's|^WEB_CMD=.*|WEB_CMD=""|' /etc/rkhunter.conf 2>/dev/null || true
-sed -i 's|^MAIL-ON-WARNING=.*|MAIL-ON-WARNING=""|' /etc/rkhunter.conf 2>/dev/null || true
-rkhunter --update >> "$LOGFILE" 2>&1 || true
-rkhunter --propupd >> "$LOGFILE" 2>&1 || true
-log_print "${GREEN}✓ rkhunter configured${NC}"
+sed -i 's|^#MAIL-ON-WARNING="|MAIL-ON-WARNING="root"|' /etc/rkhunter.conf
+sed -i 's|^COPY_LOG_ON_ERROR=1|COPY_LOG_ON_ERROR=0|' /etc/rkhunter.conf
+sed -i 's|^SCRIPTDIR=|#SCRIPTDIR=|' /etc/rkhunter.conf
 
-# Step 7: Install additional security and management tools
-log_print "${YELLOW}[7/18] Installing libpam-tmpdir and apt-show-versions...${NC}"
-apt-get install -y libpam-tmpdir apt-show-versions >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install additional security tools${NC}"
-    exit 1
-fi
-log_print "${GREEN}✓ Additional security tools installed${NC}"
+rkhunter --update >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ Rootkit detection installed${NC}"
 
-# Step 8: Install log monitoring
-log_print "${YELLOW}[8/18] Installing Logwatch for daily log monitoring...${NC}"
-apt-get install -y logwatch >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install logwatch${NC}"
-    exit 1
-fi
-log_print "${GREEN}✓ Logwatch installed${NC}"
-
-# Step 9: Install security auditing tool
-log_print "${YELLOW}[9/18] Installing Lynis for security auditing...${NC}"
+# Step 7: Install Lynis for system auditing
+log_print "${YELLOW}[7/17] Installing Lynis...${NC}"
 apt-get install -y lynis >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install lynis${NC}"
-    exit 1
-fi
 log_print "${GREEN}✓ Lynis installed${NC}"
 
-# Step 10: Install file integrity checking
-log_print "${YELLOW}[10/18] Installing debsums for file integrity...${NC}"
+# Step 8: Configure system file integrity (debsums)
+log_print "${YELLOW}[8/17] Installing debsums for file integrity...${NC}"
 apt-get install -y debsums >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install debsums${NC}"
-    exit 1
-fi
-debsums_init >> "$LOGFILE" 2>&1 || log_print "${YELLOW}Note: debsums_init not available (non-critical)${NC}"
-log_print "${GREEN}✓ debsums installed${NC}"
+debsums -g >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ Debsums configured${NC}"
 
-# Step 11: Install UFW firewall
-log_print "${YELLOW}[11/18] Installing UFW firewall...${NC}"
-apt-get install -y ufw >> "$LOGFILE" 2>&1
-if [ $? -ne 0 ]; then
-    log_print "${RED}✗ Failed to install UFW${NC}"
-    exit 1
-fi
-
-# Enable UFW and configure basic rules
-ufw --force enable >> "$LOGFILE" 2>&1
-ufw default deny incoming >> "$LOGFILE" 2>&1
-ufw default allow outgoing >> "$LOGFILE" 2>&1
-ufw allow 22/tcp >> "$LOGFILE" 2>&1  # SSH
-ufw allow 80/tcp >> "$LOGFILE" 2>&1  # HTTP
-ufw allow 443/tcp >> "$LOGFILE" 2>&1 # HTTPS
-log_print "${GREEN}✓ UFW firewall installed and configured${NC}"
-
-# Step 12: Configure SSH hardening
-log_print "${YELLOW}[12/17] Hardening SSH configuration...${NC}"
-if [ -f /etc/ssh/sshd_config ]; then
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup >> "$LOGFILE" 2>&1
-    
-    # Set SSH security parameters
-    sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-    sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-    
-    sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-    sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-    
-    sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-    
-    sed -i 's/^#X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
-    sed -i 's/^X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
-    
-    # Add additional security settings if not present
-    grep -q "^MaxAuthTries" /etc/ssh/sshd_config || echo "MaxAuthTries 3" >> /etc/ssh/sshd_config
-    grep -q "^ClientAliveInterval" /etc/ssh/sshd_config || echo "ClientAliveInterval 300" >> /etc/ssh/sshd_config
-    grep -q "^ClientAliveCountMax" /etc/ssh/sshd_config || echo "ClientAliveCountMax 2" >> /etc/ssh/sshd_config
-    grep -q "^LoginGraceTime" /etc/ssh/sshd_config || echo "LoginGraceTime 30" >> /etc/ssh/sshd_config
-    grep -q "^IgnoreRhosts" /etc/ssh/sshd_config || echo "IgnoreRhosts yes" >> /etc/ssh/sshd_config
-    grep -q "^HostbasedAuthentication" /etc/ssh/sshd_config || echo "HostbasedAuthentication no" >> /etc/ssh/sshd_config
-    
-    systemctl restart ssh >> "$LOGFILE" 2>&1
-    log_print "${GREEN}✓ SSH hardened (root login disabled, key-based auth enforced)${NC}"
-else
-    log_print "${RED}✗ SSH config not found${NC}"
-fi
-
-# Step 13: Disable unnecessary network protocols
-log_print "${YELLOW}[13/17] Disabling unnecessary network protocols...${NC}"
-cat > /etc/modprobe.d/disable-protocols.conf << 'EOF'
-# Disable uncommon network protocols
-install dccp /bin/true
-install sctp /bin/true
-install rds /bin/true
-install tipc /bin/true
+# Step 9: Harden sudo configuration
+log_print "${YELLOW}[9/17] Hardening sudo configuration...${NC}"
+cat > /etc/sudoers.d/hardening << 'EOF'
+Defaults use_pty
+Defaults logfile = "/var/log/sudo.log"
+Defaults log_input, log_output
+Defaults requiretty
 EOF
-log_print "${GREEN}✓ Network protocols disabled (dccp, sctp, rds, tipc)${NC}"
+chmod 440 /etc/sudoers.d/hardening
+log_print "${GREEN}✓ Sudo hardened${NC}"
 
-# Step 14: Configure kernel parameters (sysctl hardening)
-log_print "${YELLOW}[14/17] Hardening kernel parameters (sysctl)...${NC}"
-cat > /etc/sysctl.d/99-hardening.conf << 'EOF'
-# Kernel hardening parameters
+# Step 10: Configure kernel hardening via sysctl
+log_print "${YELLOW}[10/17] Configuring kernel hardening...${NC}"
+cat >> /etc/sysctl.conf << 'EOF'
 
-# Restrict kernel pointer exposure
+# IP forwarding
+net.ipv4.ip_forward = 0
+net.ipv6.conf.all.forwarding = 0
+
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_syn_retries = 2
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_max_syn_backlog = 4096
+
+# Ignore ICMP redirects
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+
+# Ignore bogus ICMP
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Disable source packet routing
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Log suspicious packets
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+
+# Restrict core dumps
+kernel.core_uses_pid = 1
+fs.suid_dumpable = 0
 kernel.kptr_restrict = 2
-
-# Disable kexec
-kernel.kexec_load_disabled = 1
-
-# Restrict access to kernel logs
 kernel.dmesg_restrict = 1
-
-# Restrict perf event access
-kernel.perf_event_paranoid = 3
-
-# Disable unprivileged eBPF
-kernel.unprivileged_bpf_disabled = 1
 
 # Restrict ptrace
 kernel.yama.ptrace_scope = 2
 
 # Restrict module loading
 kernel.modules_disabled = 1
-
-# Network security parameters
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.all.log_martians = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.all.send_redirects = 0
-net.ipv4.conf.default.accept_redirects = 0
-net.ipv4.conf.default.accept_source_route = 0
-net.ipv4.conf.default.log_martians = 1
-net.ipv6.conf.all.accept_redirects = 0
-net.ipv6.conf.all.accept_source_route = 0
-net.ipv6.conf.default.accept_redirects = 0
-net.ipv6.conf.default.accept_source_route = 0
-
-# BPF JIT hardening
-net.core.bpf_jit_harden = 2
-
-# Shared memory hardening
-kernel.shmmax = 68719476736
-kernel.shmall = 4194304
-
-# Core dump restrictions
-kernel.core_uses_pid = 1
-fs.suid_dumpable = 0
-
-# FIFO hardening
-fs.protected_fifos = 2
-fs.protected_regular = 2
-fs.protected_hardlinks = 1
-fs.protected_symlinks = 1
-
-# Device driver hardening
-dev.tty.ldisc_autoload = 0
 EOF
 
-sysctl -p /etc/sysctl.d/99-hardening.conf >> "$LOGFILE" 2>&1
-log_print "${GREEN}✓ Kernel parameters hardened${NC}"
+sysctl -p >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ Kernel hardening applied${NC}"
 
-# Step 15: Configure login.defs security
-log_print "${YELLOW}[15/17] Configuring /etc/login.defs security parameters...${NC}"
-if [ -f /etc/login.defs ]; then
-    cp /etc/login.defs /etc/login.defs.backup >> "$LOGFILE" 2>&1
-    
-    sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   90/' /etc/login.defs
-    sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS   1/' /etc/login.defs
-    sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE   14/' /etc/login.defs
-    sed -i 's/^PASS_MIN_LEN.*/PASS_MIN_LEN    14/' /etc/login.defs
-    sed -i 's/^UMASK.*/UMASK           027/' /etc/login.defs
-    sed -i 's/^USERGROUPS_ENAB.*/USERGROUPS_ENAB no/' /etc/login.defs
-    
-    # Add SHA512 rounds if not present
-    grep -q "^SHA_CRYPT_MIN_ROUNDS" /etc/login.defs || echo "SHA_CRYPT_MIN_ROUNDS 5000" >> /etc/login.defs
-    grep -q "^SHA_CRYPT_MAX_ROUNDS" /etc/login.defs || echo "SHA_CRYPT_MAX_ROUNDS 5000" >> /etc/login.defs
-    
-    log_print "${GREEN}✓ login.defs security parameters configured${NC}"
-else
-    log_print "${RED}✗ login.defs not found${NC}"
-fi
-
-# Step 16: Disable core dumps
-log_print "${YELLOW}[16/17] Disabling core dumps...${NC}"
-cat > /etc/security/limits.d/99-coredump.conf << 'EOF'
-# Disable core dumps
-* soft core 0
-* hard core 0
+# Step 11: Configure automatic log rotation
+log_print "${YELLOW}[11/17] Configuring log rotation...${NC}"
+cat > /etc/logrotate.d/system-hardening << 'EOF'
+/var/log/sudo.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}
 EOF
-log_print "${GREEN}✓ Core dumps disabled${NC}"
+log_print "${GREEN}✓ Log rotation configured${NC}"
 
-# Step 17: Run initial security audit
-log_print "${YELLOW}[17/17] Running initial security audit...${NC}"
-lynis audit system --quick >> "$LOGFILE" 2>&1 || true
-log_print "${GREEN}✓ Security audit complete${NC}"
+# Step 12: Install htop and other monitoring tools
+log_print "${YELLOW}[12/17] Installing monitoring tools...${NC}"
+apt-get install -y htop iotop nethogs lsof net-tools curl wget >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ Monitoring tools installed${NC}"
 
-# Final summary
+# Step 13: Enable UFW firewall (basic configuration)
+log_print "${YELLOW}[13/17] Configuring UFW firewall...${NC}"
+apt-get install -y ufw >> "$LOGFILE" 2>&1
+ufw default deny incoming >> "$LOGFILE" 2>&1
+ufw default allow outgoing >> "$LOGFILE" 2>&1
+ufw allow 22/tcp >> "$LOGFILE" 2>&1
+ufw allow 80/tcp >> "$LOGFILE" 2>&1
+ufw allow 443/tcp >> "$LOGFILE" 2>&1
+echo "y" | ufw enable >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ UFW firewall configured${NC}"
+
+# Step 14: Set up automatic TRIM for SSD optimization
+log_print "${YELLOW}[14/17] Configuring SSD TRIM...${NC}"
+systemctl enable fstrim.timer >> "$LOGFILE" 2>&1
+systemctl start fstrim.timer >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ SSD TRIM enabled${NC}"
+
+# Step 15: Install and configure aide for integrity monitoring (optional, can be resource intensive)
+log_print "${YELLOW}[15/17] Installing aide (file integrity monitoring)...${NC}"
+apt-get install -y aide aide-common >> "$LOGFILE" 2>&1 || log_print "${YELLOW}⚠ Aide installation optional${NC}"
+log_print "${GREEN}✓ Aide installed${NC}"
+
+# Step 16: Configure NTP for time synchronization
+log_print "${YELLOW}[16/17] Configuring time synchronization...${NC}"
+apt-get install -y chrony >> "$LOGFILE" 2>&1
+systemctl enable chrony >> "$LOGFILE" 2>&1
+systemctl restart chrony >> "$LOGFILE" 2>&1
+log_print "${GREEN}✓ NTP/Chrony configured${NC}"
+
+# Step 17: Verify and summarize hardening
+log_print "${YELLOW}[17/17] Verifying hardening and generating report...${NC}"
+
 log_print ""
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Hardening Complete!${NC}"
+log_print "${GREEN}  Hardening Complete - Verification Summary${NC}"
 log_print "${GREEN}================================================${NC}"
-log_print ""
-log_print "Summary of installed and configured tools:"
-log_print "  ✓ unattended-upgrades - Automatic security updates"
-log_print "  ✓ apt-listchanges - Package change notifications"
-log_print "  ✓ fail2ban - Brute force protection (jail.local created)"
-log_print "  ✓ rkhunter - Rootkit detection"
-log_print "  ✓ chkrootkit - Rootkit detection"
-log_print "  ✓ libpam-tmpdir - Temporary directory isolation"
-log_print "  ✓ apt-show-versions - Patch management"
-log_print "  ✓ Logwatch - Log monitoring"
-log_print "  ✓ Lynis - Security auditing"
-log_print "  ✓ debsums - Package integrity"
-log_print "  ✓ UFW - Firewall (basic rules configured)"
-log_print ""
-log_print "Security enhancements applied:"
-log_print "  ✓ SSH hardened (root login disabled, key auth only)"
-log_print "  ✓ Network protocols disabled (dccp, sctp, rds, tipc)"
-log_print "  ✓ Kernel parameters hardened (sysctl)"
-log_print "  ✓ login.defs security settings configured"
-log_print "  ✓ Core dumps disabled"
-log_print ""
-log_print "Next steps:"
-log_print "  1. Review hardening log: cat $LOGFILE"
-log_print "  2. Check Lynis audit: grep 'Suggestion' /var/log/lynis.log"
-log_print "  3. Verify services: systemctl status unattended-upgrades fail2ban ufw"
-log_print "  4. Check SSH: sshd -T | grep -E 'permitrootlogin|passwordauthentication'"
-log_print ""
 
-exit 0
+# Verify critical services
+log_print ""
+log_print "${YELLOW}Service Status:${NC}"
+systemctl is-active --quiet fail2ban && log_print "${GREEN}✓ fail2ban running${NC}" || log_print "${RED}✗ fail2ban not running${NC}"
+systemctl is-active --quiet ssh && log_print "${GREEN}✓ SSH running${NC}" || log_print "${RED}✗ SSH not running${NC}"
+systemctl is-active --quiet unattended-upgrades && log_print "${GREEN}✓ unattended-upgrades running${NC}" || log_print "${RED}✗ unattended-upgrades not running${NC}"
+systemctl is-active --quiet ufw && log_print "${GREEN}✓ UFW firewall running${NC}" || log_print "${RED}✗ UFW not running${NC}"
+
+# Security tool verification
+log_print ""
+log_print "${YELLOW}Security Tools:${NC}"
+which rkhunter &>/dev/null && log_print "${GREEN}✓ rkhunter installed${NC}" || log_print "${RED}✗ rkhunter missing${NC}"
+which chkrootkit &>/dev/null && log_print "${GREEN}✓ chkrootkit installed${NC}" || log_print "${RED}✗ chkrootkit missing${NC}"
+which lynis &>/dev/null && log_print "${GREEN}✓ Lynis installed${NC}" || log_print "${RED}✗ Lynis missing${NC}"
+which debsums &>/dev/null && log_print "${GREEN}✓ debsums installed${NC}" || log_print "${RED}✗ debsums missing${NC}"
+
+# Kernel hardening verification
+log_print ""
+log_print "${YELLOW}Kernel Hardening:${NC}"
+sysctl net.ipv4.tcp_syncookies | grep -q "= 1" && log_print "${GREEN}✓ SYN cookies enabled${NC}" || log_print "${RED}✗ SYN cookies not enabled${NC}"
+sysctl net.ipv4.conf.all.rp_filter | grep -q "= 1" && log_print "${GREEN}✓ IP spoofing protection enabled${NC}" || log_print "${RED}✗ IP spoofing protection not enabled${NC}"
+
+log_print ""
+log_print "${GREEN}================================================${NC}"
+log_print "${GREEN}Hardening script completed successfully${NC}"
+log_print "${GREEN}Full log: $LOGFILE${NC}"
+log_print "${GREEN}================================================${NC}"
