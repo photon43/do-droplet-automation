@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# DigitalOcean Droplet Security Hardening Script v2.0
+# DigitalOcean Droplet Security Hardening Script v2.1
 # Non-interactive version - no prompts, completely automated
 # Run as root on fresh Ubuntu 22.04 or 24.04 LTS droplet
 # Usage: ./harden-droplet.sh
+#
+# v2.1 Changes:
+# - Fixed UMASK from 027 to 022 for HestiaCP compatibility
+# - Resolves file manager breakage and /web directory permission issues
 
 # DO NOT exit on errors - we handle them individually
 set +e
@@ -28,7 +32,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Droplet Security Hardening Script v2.0${NC}"
+log_print "${GREEN}  Droplet Security Hardening Script v2.1${NC}"
 log_print "${GREEN}  (Non-interactive version)${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
@@ -164,8 +168,9 @@ sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS   1/' /etc/login.defs
 # Set maximum password age
 sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   365/' /etc/login.defs
 
-# Set stricter umask
-sed -i 's/^UMASK.*/UMASK           027/' /etc/login.defs
+# Set standard umask (022 required for HestiaCP compatibility)
+# Note: UMASK 027 breaks HestiaCP file manager and causes /web directory permission issues
+sed -i 's/^UMASK.*/UMASK           022/' /etc/login.defs
 
 log_print "${GREEN}✓ Password policies configured${NC}"
 
