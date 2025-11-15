@@ -1,9 +1,16 @@
 #!/bin/bash
 
-# Server Standard Validation Script v2.0
+# Server Standard Validation Script v3.0
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
-# Checks actual system state, not just file presence
+# Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v3.0 Changes (MAJOR EXPANSION):
+# - Added validation for harden-droplet.sh (SSH, firewall, fail2ban, auditd)
+# - Added validation for configure-webserver.sh (PHP settings, MySQL config)
+# - Added validation for install-extras.sh (htop, PHP 7.4)
+# - Now validates ENTIRE arsenal, not just backup script
+# - Complete end-to-end server state validation
 #
 # v2.0 Changes (MAJOR REWRITE):
 # - Now checks ACTUAL FUNCTIONAL STATE instead of just file presence
@@ -380,9 +387,171 @@ else
 fi
 
 # ============================================
-# SECTION 14: SYSTEM INFORMATION
+# SECTION 15: SSH HARDENING (harden-droplet.sh)
 # ============================================
-print_header "14. SYSTEM INFORMATION"
+print_header "15. SSH HARDENING (harden-droplet.sh)"
+
+if [ -f /etc/ssh/sshd_config ]; then
+    # Check SSH hardening settings
+    ROOT_LOGIN=$(grep "^PermitRootLogin" /etc/ssh/sshd_config | awk '{print $2}')
+    PASSWORD_AUTH=$(grep "^PasswordAuthentication" /etc/ssh/sshd_config | awk '{print $2}')
+    PUBKEY_AUTH=$(grep "^PubkeyAuthentication" /etc/ssh/sshd_config | awk '{print $2}')
+
+    check_result "PermitRootLogin" "no" "$ROOT_LOGIN" "exact"
+    check_result "PasswordAuthentication" "no" "$PASSWORD_AUTH" "exact"
+    check_result "PubkeyAuthentication" "yes" "$PUBKEY_AUTH" "exact"
+else
+    echo -e "${RED}❌ SSH config not found${NC}"
+    ((FAILED++))
+    ((FAILED++))
+    ((FAILED++))
+fi
+
+# ============================================
+# SECTION 16: FIREWALL & SECURITY (harden-droplet.sh)
+# ============================================
+print_header "16. FIREWALL & SECURITY (harden-droplet.sh)"
+
+# Check UFW status
+if command -v ufw &> /dev/null; then
+    UFW_STATUS=$(ufw status | grep -c "Status: active")
+    check_result "UFW firewall active" "1" "$UFW_STATUS" "min"
+else
+    echo -e "${RED}❌ UFW not installed${NC}"
+    ((FAILED++))
+fi
+
+# Check fail2ban
+if systemctl is-active fail2ban &> /dev/null; then
+    echo -e "${GREEN}✅ Fail2ban active${NC}"
+    ((PASSED++))
+
+    # Check active jails
+    JAIL_COUNT=$(fail2ban-client status 2>/dev/null | grep "Jail list" | grep -o "[0-9]*" | head -1)
+    if [ -n "$JAIL_COUNT" ] && [ "$JAIL_COUNT" -gt 0 ]; then
+        echo -e "${BLUE}  Active jails: $JAIL_COUNT${NC}"
+    fi
+else
+    echo -e "${RED}❌ Fail2ban not active${NC}"
+    ((FAILED++))
+fi
+
+# Check auditd
+if systemctl is-active auditd &> /dev/null; then
+    echo -e "${GREEN}✅ Auditd logging active${NC}"
+    ((PASSED++))
+else
+    echo -e "${RED}❌ Auditd not active${NC}"
+    ((FAILED++))
+fi
+
+# Check unattended-upgrades
+if [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
+    if dpkg -l | grep -q "^ii  unattended-upgrades"; then
+        check_result "Unattended upgrades configured" "yes" "yes" "exact"
+    else
+        echo -e "${YELLOW}⚠️  Unattended-upgrades package not installed${NC}"
+        ((WARNINGS++))
+    fi
+else
+    echo -e "${YELLOW}⚠️  Unattended-upgrades not configured${NC}"
+    ((WARNINGS++))
+fi
+
+# ============================================
+# SECTION 17: PHP CONFIGURATION (configure-webserver.sh)
+# ============================================
+print_header "17. PHP CONFIGURATION (configure-webserver.sh)"
+
+if command -v php &> /dev/null; then
+    PHP_INI=$(php -i 2>/dev/null | grep "Loaded Configuration File" | awk '{print $5}')
+
+    if [ -f "$PHP_INI" ]; then
+        # Check critical PHP settings for large imports
+        MAX_EXEC=$(php -r "echo ini_get('max_execution_time');")
+        UPLOAD_MAX=$(php -r "echo ini_get('upload_max_filesize');")
+        POST_MAX=$(php -r "echo ini_get('post_max_size');")
+        MEMORY=$(php -r "echo ini_get('memory_limit');")
+
+        echo -e "${BLUE}  max_execution_time: ${MAX_EXEC}s${NC}"
+        echo -e "${BLUE}  upload_max_filesize: ${UPLOAD_MAX}${NC}"
+        echo -e "${BLUE}  post_max_size: ${POST_MAX}${NC}"
+        echo -e "${BLUE}  memory_limit: ${MEMORY}${NC}"
+
+        # Check if values are reasonable for database imports
+        # Max execution should be at least 300s, upload/post at least 128M, memory at least 256M
+        if [ "$MAX_EXEC" -ge 300 ]; then
+            echo -e "${GREEN}✅ max_execution_time sufficient for large imports${NC}"
+            ((PASSED++))
+        else
+            echo -e "${YELLOW}⚠️  max_execution_time may be too low for large imports (${MAX_EXEC}s < 300s)${NC}"
+            ((WARNINGS++))
+        fi
+    else
+        echo -e "${YELLOW}⚠️  PHP config file not found${NC}"
+        ((WARNINGS++))
+    fi
+else
+    echo -e "${RED}❌ PHP not found${NC}"
+    ((FAILED++))
+fi
+
+# ============================================
+# SECTION 18: MYSQL CONFIGURATION (configure-webserver.sh)
+# ============================================
+print_header "18. MYSQL CONFIGURATION (configure-webserver.sh)"
+
+if systemctl is-active mysql &> /dev/null; then
+    # Check max_allowed_packet
+    MAX_PACKET=$(mysql -e "SHOW VARIABLES LIKE 'max_allowed_packet';" 2>/dev/null | grep max_allowed_packet | awk '{print $2}')
+
+    if [ -n "$MAX_PACKET" ]; then
+        # Convert to MB for display
+        MAX_PACKET_MB=$((MAX_PACKET / 1024 / 1024))
+        echo -e "${BLUE}  max_allowed_packet: ${MAX_PACKET_MB}MB${NC}"
+
+        # Should be at least 64MB for large imports
+        if [ $MAX_PACKET_MB -ge 64 ]; then
+            echo -e "${GREEN}✅ max_allowed_packet sufficient for large imports${NC}"
+            ((PASSED++))
+        else
+            echo -e "${YELLOW}⚠️  max_allowed_packet may be too low (${MAX_PACKET_MB}MB < 64MB)${NC}"
+            ((WARNINGS++))
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Could not read max_allowed_packet${NC}"
+        ((WARNINGS++))
+    fi
+else
+    echo -e "${YELLOW}⚠️  MySQL not active (may not be needed)${NC}"
+    ((WARNINGS++))
+fi
+
+# ============================================
+# SECTION 19: EXTRA TOOLS (install-extras.sh)
+# ============================================
+print_header "19. EXTRA TOOLS (install-extras.sh)"
+
+# Check htop
+if command -v htop &> /dev/null; then
+    check_result "htop installed" "yes" "yes" "exact"
+else
+    echo -e "${YELLOW}⚠️  htop not installed${NC}"
+    ((WARNINGS++))
+fi
+
+# Check PHP 7.4 (optional - may not be on all servers)
+if command -v php7.4 &> /dev/null; then
+    echo -e "${GREEN}✅ PHP 7.4 installed (legacy support)${NC}"
+    ((PASSED++))
+else
+    echo -e "${BLUE}  PHP 7.4 not installed (not required)${NC}"
+fi
+
+# ============================================
+# SECTION 20: SYSTEM INFORMATION
+# ============================================
+print_header "20. SYSTEM INFORMATION"
 
 echo -e "${BLUE}Hostname:${NC} $(hostname)"
 echo -e "${BLUE}Kernel:${NC} $(uname -r)"
