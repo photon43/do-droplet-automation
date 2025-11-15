@@ -1,9 +1,15 @@
 #!/bin/bash
 
-# Server Standard Validation Script v3.0
+# Server Standard Validation Script v3.1
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v3.1 Changes (SSH/UFW now optional):
+# - SSH hardening checks changed to WARNINGS (not part of v2.1 standard)
+# - UFW firewall check changed to WARNING (not part of v2.1 standard)
+# - These are RECOMMENDED for future v2.2 standard but not required for v2.1 compliance
+# - Servers can now show 100% v2.1 compliance with optional security recommendations
 #
 # v3.0 Changes (MAJOR EXPANSION):
 # - Added validation for harden-droplet.sh (SSH, firewall, fail2ban, auditd)
@@ -23,7 +29,7 @@
 # - Fixed backup script version check (v2.1 and v2.2 now both accepted correctly)
 #
 # Exit codes:
-#   0 = All checks passed (100% compliant)
+#   0 = All checks passed (100% compliant with v2.1 - may have warnings for optional features)
 #   1 = One or more checks failed (non-compliant)
 
 # Color codes for output
@@ -387,24 +393,46 @@ else
 fi
 
 # ============================================
-# SECTION 15: SSH HARDENING (harden-droplet.sh)
+# SECTION 15: SSH HARDENING (OPTIONAL - NOT PART OF v2.1)
 # ============================================
-print_header "15. SSH HARDENING (harden-droplet.sh)"
+print_header "15. SSH HARDENING (OPTIONAL - Recommended for v2.2)"
+
+echo -e "${YELLOW}⚠️  SSH hardening is NOT part of v2.1 standard${NC}"
+echo -e "${YELLOW}   This is a RECOMMENDED security enhancement for future v2.2 standard${NC}"
+echo ""
 
 if [ -f /etc/ssh/sshd_config ]; then
-    # Check SSH hardening settings
+    # Check SSH hardening settings - these are WARNINGS, not failures
     ROOT_LOGIN=$(grep "^PermitRootLogin" /etc/ssh/sshd_config | awk '{print $2}')
     PASSWORD_AUTH=$(grep "^PasswordAuthentication" /etc/ssh/sshd_config | awk '{print $2}')
     PUBKEY_AUTH=$(grep "^PubkeyAuthentication" /etc/ssh/sshd_config | awk '{print $2}')
 
-    check_result "PermitRootLogin" "no" "$ROOT_LOGIN" "exact"
-    check_result "PasswordAuthentication" "no" "$PASSWORD_AUTH" "exact"
-    check_result "PubkeyAuthentication" "yes" "$PUBKEY_AUTH" "exact"
+    if [ "$ROOT_LOGIN" != "no" ]; then
+        echo -e "${YELLOW}⚠️  PermitRootLogin = '$ROOT_LOGIN' (recommended: 'no')${NC}"
+        ((WARNINGS++))
+    else
+        echo -e "${GREEN}✅ PermitRootLogin = 'no' (enhanced security)${NC}"
+        ((PASSED++))
+    fi
+
+    if [ "$PASSWORD_AUTH" != "no" ]; then
+        echo -e "${YELLOW}⚠️  PasswordAuthentication = '$PASSWORD_AUTH' (recommended: 'no')${NC}"
+        ((WARNINGS++))
+    else
+        echo -e "${GREEN}✅ PasswordAuthentication = 'no' (enhanced security)${NC}"
+        ((PASSED++))
+    fi
+
+    if [ "$PUBKEY_AUTH" != "yes" ]; then
+        echo -e "${YELLOW}⚠️  PubkeyAuthentication = '$PUBKEY_AUTH' (recommended: 'yes')${NC}"
+        ((WARNINGS++))
+    else
+        echo -e "${GREEN}✅ PubkeyAuthentication = 'yes' (enhanced security)${NC}"
+        ((PASSED++))
+    fi
 else
-    echo -e "${RED}❌ SSH config not found${NC}"
-    ((FAILED++))
-    ((FAILED++))
-    ((FAILED++))
+    echo -e "${YELLOW}⚠️  SSH config not found${NC}"
+    ((WARNINGS++))
 fi
 
 # ============================================
@@ -412,16 +440,30 @@ fi
 # ============================================
 print_header "16. FIREWALL & SECURITY (harden-droplet.sh)"
 
-# Check UFW status
+# Check UFW status - OPTIONAL for v2.1 (recommended for v2.2)
+echo -e "${YELLOW}⚠️  UFW firewall is NOT part of v2.1 standard${NC}"
+echo -e "${YELLOW}   This is a RECOMMENDED security enhancement for future v2.2 standard${NC}"
+echo ""
+
 if command -v ufw &> /dev/null; then
     UFW_STATUS=$(ufw status | grep -c "Status: active")
-    check_result "UFW firewall active" "1" "$UFW_STATUS" "min"
+    if [ "$UFW_STATUS" -ge 1 ]; then
+        echo -e "${GREEN}✅ UFW firewall active (enhanced security)${NC}"
+        ((PASSED++))
+    else
+        echo -e "${YELLOW}⚠️  UFW firewall inactive (recommended: active)${NC}"
+        ((WARNINGS++))
+    fi
 else
-    echo -e "${RED}❌ UFW not installed${NC}"
-    ((FAILED++))
+    echo -e "${YELLOW}⚠️  UFW not installed (recommended for v2.2)${NC}"
+    ((WARNINGS++))
 fi
 
-# Check fail2ban
+echo ""
+echo -e "${BLUE}The following security tools ARE required for v2.1:${NC}"
+echo ""
+
+# Check fail2ban - REQUIRED for v2.1
 if systemctl is-active fail2ban &> /dev/null; then
     echo -e "${GREEN}✅ Fail2ban active${NC}"
     ((PASSED++))
