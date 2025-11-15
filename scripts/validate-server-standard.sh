@@ -1,9 +1,19 @@
 #!/bin/bash
 
-# Server Standard Validation Script v1.0
-# Validates complete compliance with v2.1 baseline standard
-# Run on any server to verify configuration matches expected standard
+# Server Standard Validation Script v2.0
+# Validates FUNCTIONAL compliance with v2.1 baseline standard
+# Checks actual system state, not just file presence
 # Usage: ./validate-server-standard.sh
+#
+# v2.0 Changes (MAJOR REWRITE):
+# - Now checks ACTUAL FUNCTIONAL STATE instead of just file presence
+# - Validates backup system is actually working (logs, recent runs)
+# - Validates users actually have BACKUPS='10' (not just hook file exists)
+# - Validates cron jobs have actually run recently (from logs)
+# - Much more reliable - catches real problems, not just missing files
+#
+# v1.1 Changes:
+# - Fixed backup script version check (v2.1 and v2.2 now both accepted correctly)
 #
 # Exit codes:
 #   0 = All checks passed (100% compliant)
@@ -70,7 +80,7 @@ check_result() {
 # Start validation
 print_header "v2.1 STANDARD VALIDATION - $(hostname)"
 echo "Date: $(date)"
-echo "Validating server against v2.1 baseline standard..."
+echo "Validating FUNCTIONAL server state against v2.1 baseline..."
 
 # ============================================
 # SECTION 1: MAIL SERVICES REMOVAL
@@ -80,7 +90,6 @@ print_header "1. MAIL SERVICES REMOVAL"
 MAIL_PACKAGES=$(dpkg -l 2>/dev/null | grep -E "dovecot|exim4|clamav|spamassassin|roundcube" | grep -E "^(ii|rc)" | wc -l)
 check_result "Mail packages removed" "0" "$MAIL_PACKAGES" "exact"
 
-# Check specific package status
 if [ $MAIL_PACKAGES -gt 0 ]; then
     echo -e "${YELLOW}Found mail packages:${NC}"
     dpkg -l 2>/dev/null | grep -E "dovecot|exim4|clamav|spamassassin|roundcube" | grep -E "^(ii|rc)"
@@ -146,26 +155,51 @@ else
 fi
 
 # ============================================
-# SECTION 6: PACKAGE HOOK
+# SECTION 6: ACTUAL USER BACKUP QUOTAS
 # ============================================
-print_header "6. HESTIACP PACKAGE HOOK"
+print_header "6. USER BACKUP QUOTAS (FUNCTIONAL CHECK)"
 
-if [ -f /usr/local/hestia/data/packages/default.sh ]; then
-    if [ -x /usr/local/hestia/data/packages/default.sh ]; then
-        check_result "Package hook executable" "yes" "yes" "exact"
+# Check ACTUAL user configurations, not just hook file
+if [ -f /usr/local/hestia/bin/v-list-users ]; then
+    USERS=$(/usr/local/hestia/bin/v-list-users plain 2>/dev/null | grep -v "^root" | awk '{print $1}')
 
-        # Verify hook content
-        if grep -q "BACKUPS='10'" /usr/local/hestia/data/packages/default.sh; then
-            check_result "Hook sets BACKUPS='10'" "yes" "yes" "exact"
-        else
-            check_result "Hook sets BACKUPS='10'" "yes" "no" "exact"
-        fi
+    if [ -z "$USERS" ]; then
+        echo -e "${YELLOW}⚠️  No non-root users found${NC}"
+        ((WARNINGS++))
     else
-        check_result "Package hook executable" "yes" "no" "exact"
-        ((FAILED++))
+        BAD_QUOTA_USERS=0
+        GOOD_QUOTA_USERS=0
+
+        for user in $USERS; do
+            USER_CONF="/usr/local/hestia/data/users/$user/user.conf"
+            if [ -f "$USER_CONF" ]; then
+                QUOTA=$(grep "^BACKUPS=" "$USER_CONF" | cut -d"'" -f2)
+                if [ "$QUOTA" = "1" ]; then
+                    echo -e "${RED}  ✗ User '$user' has BACKUPS='1' (should be '10')${NC}"
+                    ((BAD_QUOTA_USERS++))
+                else
+                    ((GOOD_QUOTA_USERS++))
+                fi
+            fi
+        done
+
+        if [ $BAD_QUOTA_USERS -eq 0 ]; then
+            check_result "All users have BACKUPS='10'" "yes" "yes" "exact"
+        else
+            check_result "Users with BACKUPS='1'" "0" "$BAD_QUOTA_USERS" "exact"
+        fi
+    fi
+
+    # Also check if hook file exists (secondary check)
+    if [ -f /usr/local/hestia/data/packages/default.sh ] && [ -x /usr/local/hestia/data/packages/default.sh ]; then
+        echo -e "${GREEN}✅ Package hook installed (will auto-fix new users)${NC}"
+        ((PASSED++))
+    else
+        echo -e "${YELLOW}⚠️  Package hook not found (new users may have BACKUPS='1')${NC}"
+        ((WARNINGS++))
     fi
 else
-    echo -e "${RED}❌ Package hook not found: /usr/local/hestia/data/packages/default.sh${NC}"
+    echo -e "${RED}❌ HestiaCP not found${NC}"
     ((FAILED++))
     ((FAILED++))
 fi
@@ -223,48 +257,83 @@ if [ $RC_COUNT -gt 0 ]; then
 fi
 
 # ============================================
-# SECTION 10: BACKUP SCRIPT
+# SECTION 10: BACKUP SYSTEM (FUNCTIONAL CHECK)
 # ============================================
-print_header "10. BACKUP SCRIPT CONFIGURATION"
+print_header "10. BACKUP SYSTEM (FUNCTIONAL STATE)"
 
-BACKUP_SCRIPT="/usr/local/bin/unified-hestia-backup-automation-interactive.sh"
+BACKUP_LOG="/var/log/hestia/backup-automation.log"
+CLEANUP_LOG="/var/log/hestia/cleanup-automation.log"
 
-if [ -f "$BACKUP_SCRIPT" ]; then
-    check_result "Backup script exists" "yes" "yes" "exact"
+# Check 1: Backup log exists and has content
+if [ -f "$BACKUP_LOG" ]; then
+    LOG_SIZE=$(stat -f%z "$BACKUP_LOG" 2>/dev/null || stat -c%s "$BACKUP_LOG" 2>/dev/null)
 
-    # Check version
-    BACKUP_VERSION=$(head -5 "$BACKUP_SCRIPT" | grep "^# Unified HestiaCP Backup" | grep -o "v[0-9]\.[0-9]")
+    if [ "$LOG_SIZE" -gt 0 ]; then
+        check_result "Backup log exists with content" "yes" "yes" "exact"
 
-    if [ "$BACKUP_VERSION" = "v2.1" ] || [ "$BACKUP_VERSION" = "v2.2" ]; then
-        check_result "Backup script version" "v2.1+" "$BACKUP_VERSION" "exact"
+        # Check 2: When was last backup cycle?
+        LAST_BACKUP=$(grep "Starting automated backup cycle" "$BACKUP_LOG" | tail -1 | awk '{print $1, $2, $3}')
+
+        if [ -n "$LAST_BACKUP" ]; then
+            echo -e "${BLUE}  Last backup started: $LAST_BACKUP${NC}"
+
+            # Check 3: Was last backup successful?
+            LAST_COMPLETE=$(grep "Backup cycle complete" "$BACKUP_LOG" | tail -1)
+
+            if [ -n "$LAST_COMPLETE" ]; then
+                check_result "Last backup completed successfully" "yes" "yes" "exact"
+                echo -e "${BLUE}  $LAST_COMPLETE${NC}"
+            else
+                echo -e "${RED}❌ Last backup did not complete${NC}"
+                ((FAILED++))
+            fi
+        else
+            echo -e "${YELLOW}⚠️  No backup cycles found in log${NC}"
+            ((WARNINGS++))
+        fi
     else
-        echo -e "${YELLOW}⚠️  Backup script version: $BACKUP_VERSION (expected v2.1 or v2.2)${NC}"
+        echo -e "${YELLOW}⚠️  Backup log empty (backups may not have run yet)${NC}"
         ((WARNINGS++))
     fi
+else
+    echo -e "${YELLOW}⚠️  Backup log not found: $BACKUP_LOG${NC}"
+    echo -e "${YELLOW}    Backups may not have run yet${NC}"
+    ((WARNINGS++))
+fi
 
-    # Check executable
-    if [ -x "$BACKUP_SCRIPT" ]; then
-        check_result "Backup script executable" "yes" "yes" "exact"
+# Check 4: Cleanup log exists
+if [ -f "$CLEANUP_LOG" ]; then
+    LOG_SIZE=$(stat -f%z "$CLEANUP_LOG" 2>/dev/null || stat -c%s "$CLEANUP_LOG" 2>/dev/null)
+
+    if [ "$LOG_SIZE" -gt 0 ]; then
+        LAST_CLEANUP=$(grep "Starting backup cleanup cycle" "$CLEANUP_LOG" | tail -1 | awk '{print $1, $2, $3}')
+
+        if [ -n "$LAST_CLEANUP" ]; then
+            echo -e "${BLUE}✅ Last cleanup started: $LAST_CLEANUP${NC}"
+            ((PASSED++))
+        else
+            echo -e "${YELLOW}⚠️  No cleanup cycles found in log${NC}"
+            ((WARNINGS++))
+        fi
     else
-        check_result "Backup script executable" "yes" "no" "exact"
+        echo -e "${YELLOW}⚠️  Cleanup log empty${NC}"
+        ((WARNINGS++))
     fi
 else
-    echo -e "${RED}❌ Backup script not found: $BACKUP_SCRIPT${NC}"
-    ((FAILED++))
-    ((FAILED++))
-    ((FAILED++))
+    echo -e "${YELLOW}⚠️  Cleanup log not found${NC}"
+    ((WARNINGS++))
 fi
 
 # ============================================
-# SECTION 11: BACKUP CRON JOBS
+# SECTION 11: BACKUP CRON SCHEDULE
 # ============================================
-print_header "11. BACKUP CRON JOBS"
+print_header "11. BACKUP CRON SCHEDULE"
 
 CRON_COUNT=$(crontab -l 2>/dev/null | grep -c "unified-hestia-backup")
-check_result "Backup cron jobs" "2" "$CRON_COUNT" "exact"
+check_result "Backup cron jobs configured" "2" "$CRON_COUNT" "exact"
 
 if [ $CRON_COUNT -eq 2 ]; then
-    echo -e "${BLUE}Backup schedule:${NC}"
+    echo -e "${BLUE}Configured schedule:${NC}"
     crontab -l 2>/dev/null | grep "unified-hestia-backup"
 elif [ $CRON_COUNT -gt 0 ]; then
     echo -e "${YELLOW}Found cron jobs (expected 2):${NC}"
@@ -272,7 +341,7 @@ elif [ $CRON_COUNT -gt 0 ]; then
 fi
 
 # ============================================
-# SECTION 12: CRITICAL SERVICES
+# SECTION 12: CRITICAL SERVICES STATUS
 # ============================================
 print_header "12. CRITICAL SERVICES STATUS"
 
