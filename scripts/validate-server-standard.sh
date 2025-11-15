@@ -1,9 +1,24 @@
 #!/bin/bash
 
-# Server Standard Validation Script v3.1
+# Server Standard Validation Script v4.1
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.1 Changes (CRITICAL BUGFIXES - Fixed 2 broken checks + added 3 missing):
+# - FIXED: Protocol blacklist filename (was checking wrong file!)
+# - FIXED: Apache timeout case (TimeOut not Timeout - official directive)
+# - Added: UMASK 022 check (HestiaCP compatibility requirement)
+# - Added: Rclone configured check (backup system dependency)
+# - Added: Backup config files check (security verification)
+#
+# v4.0 Changes (CRITICAL - Added 5 missing checks discovered 2025-11-15):
+# - Added: HestiaCP built-in backup cron disabled check (prevents conflicts)
+# - Added: BACKUP_SYSTEM='local' check (prevents retention bug)
+# - Added: Apache Timeout=600 check (prevents upload timeouts)
+# - Added: Core dumps disabled check (security hardening)
+# - Added: Protocol blacklist check (security hardening)
+# - These checks were MISSING in v3.1, causing false "100% compliance" reports
 #
 # v3.1 Changes (SSH/UFW now optional):
 # - SSH hardening checks changed to WARNINGS (not part of v2.1 standard)
@@ -168,6 +183,41 @@ else
 fi
 
 # ============================================
+# SECTION 5.5: SECURITY HARDENING (harden-droplet.sh)
+# ============================================
+print_header "5.5. SECURITY HARDENING (harden-droplet.sh)"
+
+# Check core dumps disabled
+if grep -q "^\* hard core 0" /etc/security/limits.conf 2>/dev/null; then
+    check_result "Core dumps disabled" "yes" "yes" "exact"
+else
+    check_result "Core dumps disabled" "yes" "no" "exact"
+fi
+
+# Check protocol blacklist (harden-droplet.sh creates this file)
+if [ -f /etc/modprobe.d/blacklist-uncommon-network-protocols.conf ]; then
+    PROTOCOL_COUNT=$(wc -l < /etc/modprobe.d/blacklist-uncommon-network-protocols.conf)
+    check_result "Protocol blacklist configured" "4" "$PROTOCOL_COUNT" "exact"
+else
+    check_result "Protocol blacklist configured" "yes" "no" "exact"
+fi
+
+# Check UMASK 022 (CRITICAL for HestiaCP file manager compatibility)
+if [ -f /etc/login.defs ]; then
+    UMASK_VAL=$(grep "^UMASK" /etc/login.defs 2>/dev/null | awk '{print $2}')
+    if [ "$UMASK_VAL" = "022" ]; then
+        check_result "UMASK setting (HestiaCP compatible)" "022" "022" "exact"
+    else
+        echo -e "${RED}❌ UMASK setting: Expected '022', Got '$UMASK_VAL'${NC}"
+        echo -e "${RED}   UMASK 027 breaks HestiaCP file manager!${NC}"
+        ((FAILED++))
+    fi
+else
+    echo -e "${RED}❌ /etc/login.defs not found${NC}"
+    ((FAILED++))
+fi
+
+# ============================================
 # SECTION 6: ACTUAL USER BACKUP QUOTAS
 # ============================================
 print_header "6. USER BACKUP QUOTAS (FUNCTIONAL CHECK)"
@@ -273,6 +323,61 @@ fi
 # SECTION 10: BACKUP SYSTEM (FUNCTIONAL CHECK)
 # ============================================
 print_header "10. BACKUP SYSTEM (FUNCTIONAL STATE)"
+
+# Check 0.0: Rclone installed and configured
+if command -v rclone &> /dev/null; then
+    check_result "Rclone installed" "yes" "yes" "exact"
+
+    RCLONE_REMOTES=$(rclone listremotes 2>/dev/null | wc -l)
+    if [ "$RCLONE_REMOTES" -gt 0 ]; then
+        check_result "Rclone configured with remote(s)" "yes" "yes" "exact"
+        echo -e "${BLUE}  Configured remotes: $(rclone listremotes 2>/dev/null | tr '\n' ' ')${NC}"
+    else
+        check_result "Rclone configured with remote(s)" "yes" "no" "exact"
+    fi
+else
+    check_result "Rclone installed" "yes" "no" "exact"
+    ((FAILED++))  # Increment again for missing remotes
+fi
+
+# Check 0.1: BACKUP_SYSTEM='local' (CRITICAL - prevents retention bug)
+if [ -f /usr/local/hestia/conf/hestia.conf ]; then
+    BACKUP_SYSTEM=$(grep "^BACKUP_SYSTEM=" /usr/local/hestia/conf/hestia.conf | cut -d"'" -f2)
+    check_result "BACKUP_SYSTEM setting" "local" "$BACKUP_SYSTEM" "exact"
+else
+    echo -e "${RED}❌ HestiaCP config not found${NC}"
+    ((FAILED++))
+fi
+
+# Check 0.2: HestiaCP built-in backup cron disabled (CRITICAL - prevents conflicts)
+HESTIA_CRON=$(crontab -u hestiaweb -l 2>/dev/null | grep "v-backup-users" | grep -v "^#" | wc -l)
+if [ "$HESTIA_CRON" -eq 0 ]; then
+    check_result "HestiaCP built-in backup cron disabled" "yes" "yes" "exact"
+else
+    check_result "HestiaCP built-in backup cron disabled" "yes" "no" "exact"
+    echo -e "${YELLOW}  Found active HestiaCP backup cron (should be commented out)${NC}"
+    crontab -u hestiaweb -l 2>/dev/null | grep "v-backup-users"
+fi
+
+# Check 0.3: Backup config file exists and is secure
+if [ -f /etc/hestia/backup.conf ]; then
+    check_result "Backup config file exists" "yes" "yes" "exact"
+else
+    check_result "Backup config file exists" "yes" "no" "exact"
+fi
+
+# Check 0.4: Brevo API key exists and is secured (chmod 600)
+if [ -f /etc/hestia/brevo.key ]; then
+    KEY_PERMS=$(stat -c %a /etc/hestia/brevo.key 2>/dev/null || stat -f %OLp /etc/hestia/brevo.key 2>/dev/null)
+    if [ "$KEY_PERMS" = "600" ]; then
+        check_result "Brevo API key secured (chmod 600)" "yes" "yes" "exact"
+    else
+        echo -e "${RED}❌ Brevo API key permissions: Expected '600', Got '$KEY_PERMS'${NC}"
+        ((FAILED++))
+    fi
+else
+    check_result "Brevo API key exists" "yes" "no" "exact"
+fi
 
 BACKUP_LOG="/var/log/hestia/backup-automation.log"
 CLEANUP_LOG="/var/log/hestia/cleanup-automation.log"
@@ -536,6 +641,25 @@ if command -v php &> /dev/null; then
 else
     echo -e "${RED}❌ PHP not found${NC}"
     ((FAILED++))
+fi
+
+# ============================================
+# SECTION 17.5: APACHE CONFIGURATION (configure-webserver.sh)
+# ============================================
+print_header "17.5. APACHE CONFIGURATION (configure-webserver.sh)"
+
+# Check Apache Timeout setting (official directive is "TimeOut" with capital O)
+if [ -f /etc/apache2/apache2.conf ]; then
+    APACHE_TIMEOUT=$(grep "^TimeOut" /etc/apache2/apache2.conf | awk '{print $2}')
+    if [ -n "$APACHE_TIMEOUT" ]; then
+        check_result "Apache TimeOut" "600" "$APACHE_TIMEOUT" "exact"
+    else
+        echo -e "${YELLOW}⚠️  Apache TimeOut not found in config${NC}"
+        ((WARNINGS++))
+    fi
+else
+    echo -e "${YELLOW}⚠️  Apache config not found${NC}"
+    ((WARNINGS++))
 fi
 
 # ============================================
