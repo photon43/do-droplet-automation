@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.1
+# Post-HestiaCP Cleanup Script v1.2
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.2 Changes:
+# - Added systemctl mask for dovecot/exim4 (prevents HestiaCP Let's Encrypt cron from restarting them)
 #
 # v1.1 Changes:
 # - Changed apt-get remove to purge for complete removal (no leftover config files)
@@ -32,7 +35,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.1${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.2${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -51,6 +54,12 @@ systemctl disable exim4 2>/dev/null || true
 systemctl disable dovecot 2>/dev/null || true
 systemctl disable spamassassin 2>/dev/null || true
 log_print "${GREEN}✓ Mail services stopped and disabled${NC}"
+
+# Mask dovecot and exim4 to prevent HestiaCP Let's Encrypt cron from restarting them
+log_print "${YELLOW}Masking dovecot and exim4...${NC}"
+systemctl mask dovecot 2>/dev/null || true
+systemctl mask exim4 2>/dev/null || true
+log_print "${GREEN}✓ Dovecot and Exim4 masked (cannot be started by any command)${NC}"
 
 # Step 1: Remove ClamAV
 log_print "${YELLOW}[1/9] Removing ClamAV anti-virus...${NC}"
