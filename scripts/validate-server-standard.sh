@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.1
+# Server Standard Validation Script v4.2
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.2 Changes (Bugfix):
+# - FIXED: Protocol blacklist check now counts only 'install' lines, not comment lines
 #
 # v4.1 Changes (CRITICAL BUGFIXES - Fixed 2 broken checks + added 3 missing):
 # - FIXED: Protocol blacklist filename (was checking wrong file!)
@@ -196,7 +199,7 @@ fi
 
 # Check protocol blacklist (harden-droplet.sh creates this file)
 if [ -f /etc/modprobe.d/blacklist-uncommon-network-protocols.conf ]; then
-    PROTOCOL_COUNT=$(wc -l < /etc/modprobe.d/blacklist-uncommon-network-protocols.conf)
+    PROTOCOL_COUNT=$(grep -c "^install" /etc/modprobe.d/blacklist-uncommon-network-protocols.conf)
     check_result "Protocol blacklist configured" "4" "$PROTOCOL_COUNT" "exact"
 else
     check_result "Protocol blacklist configured" "yes" "no" "exact"
