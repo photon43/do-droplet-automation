@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# Unified HestiaCP Backup Automation v2.1
+# Unified HestiaCP Backup Automation v2.2
 # Automated backup and cleanup with S3/Rclone and Brevo email notifications
 # Automatically fixes HestiaCP config to prevent retention issues
+# Installs HestiaCP package hook to auto-fix new users (BACKUPS='10')
 # Run after HestiaCP installation and Rclone configuration
 # Usage: ./unified-hestia-backup-automation-interactive.sh [backup|cleanup]
 
@@ -114,12 +115,58 @@ fix_hestia_config() {
   log_print ""
 }
 
+# Install HestiaCP package hook to auto-fix new users
+install_hestiacp_hook() {
+  log_print ""
+  log_print "${YELLOW}Installing HestiaCP package hook for new users...${NC}"
+
+  local hook_file="/usr/local/hestia/data/packages/default.sh"
+
+  if [ -f "$hook_file" ]; then
+    log_print "${GREEN}✓ HestiaCP hook already installed${NC}"
+    log_print ""
+    return 0
+  fi
+
+  cat > "$hook_file" << 'HOOK_EOF'
+#!/bin/bash
+#
+# HestiaCP Default Package Hook - Fix BACKUPS Quota
+# Automatically sets BACKUPS='10' for new users
+#
+
+USERNAME=$1
+USER_CONF="/usr/local/hestia/data/users/$USERNAME/user.conf"
+LOG_FILE="/var/log/hestia/package-hooks.log"
+
+mkdir -p /var/log/hestia
+
+if [ -f "$USER_CONF" ]; then
+    sed -i "s/BACKUPS='1'/BACKUPS='10'/" "$USER_CONF"
+    echo "$(date +%Y-%m-%d_%H:%M:%S) - Fixed BACKUPS='10' for: $USERNAME" >> "$LOG_FILE"
+fi
+
+exit 0
+HOOK_EOF
+
+  chmod +x "$hook_file"
+
+  if [ -f "$hook_file" ] && [ -x "$hook_file" ]; then
+    log_print "${GREEN}✓ HestiaCP hook installed successfully${NC}"
+    log_print "${GREEN}  → New users will automatically get BACKUPS='10'${NC}"
+  else
+    log_print "${RED}✗ Failed to install HestiaCP hook${NC}"
+  fi
+
+  log_print ""
+}
+
 setup_interactive() {
   mkdir -p "$(dirname "$CONFIG_FILE")"
   mkdir -p "/var/log/hestia"
 
   log_print "${GREEN}================================================${NC}"
-  log_print "${GREEN}  HestiaCP Backup Automation Setup v2.1${NC}"
+  log_print "${GREEN}  HestiaCP Backup Automation Setup v2.2${NC}"
   log_print "${GREEN}================================================${NC}"
   log_print ""
 
@@ -133,6 +180,9 @@ setup_interactive() {
 
   # Fix HestiaCP configuration before saving our config
   fix_hestia_config
+
+  # Install package hook for new users
+  install_hestiacp_hook
 
   FROM_EMAIL="noreply@serveradmin.11massmedia.com"
 
@@ -235,7 +285,7 @@ send_backup_email() {
   local payload=$(cat <<'PAYLOAD'
 {
   "sender": {
-    "name": "Backup Automation v2.1",
+    "name": "Backup Automation v2.2",
     "email": "X_FROM_EMAIL"
   },
   "to": [{
@@ -314,7 +364,7 @@ send_cleanup_email() {
   local payload=$(cat <<'PAYLOAD'
 {
   "sender": {
-    "name": "Backup Cleanup v2.1",
+    "name": "Backup Cleanup v2.2",
     "email": "X_FROM_EMAIL"
   },
   "to": [{
@@ -347,7 +397,7 @@ PAYLOAD
 
 run_backup() {
   log_backup "=========================================="
-  log_backup "Starting automated backup cycle (v2.1)"
+  log_backup "Starting automated backup cycle (v2.2)"
   log_backup "=========================================="
 
   TOTAL_USERS=0
@@ -376,7 +426,7 @@ run_backup() {
 
 run_cleanup() {
   log_cleanup "=========================================="
-  log_cleanup "Starting backup cleanup cycle (v2.1)"
+  log_cleanup "Starting backup cleanup cycle (v2.2)"
   log_cleanup "=========================================="
 
   TOTAL_DELETED=0
