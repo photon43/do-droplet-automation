@@ -1,9 +1,14 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.2
+# Server Standard Validation Script v4.3
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.3 Changes (Gap fixes from comprehensive audit):
+# - Added: libpam-pwquality package check (explicit package verification)
+# - Added: Nginx proxy timeouts check (3 checks: connect, read, send - all must be 600s)
+# - These 2 gaps were discovered during checklist vs validation cross-reference audit
 #
 # v4.2 Changes (Bugfix):
 # - FIXED: Protocol blacklist check now counts only 'install' lines, not comment lines
@@ -171,6 +176,13 @@ fi
 # SECTION 5: PASSWORD POLICIES
 # ============================================
 print_header "5. PASSWORD POLICIES"
+
+# Check libpam-pwquality package installed
+if dpkg -l 2>/dev/null | grep -q "^ii  libpam-pwquality"; then
+    check_result "libpam-pwquality installed" "yes" "yes" "exact"
+else
+    check_result "libpam-pwquality installed" "yes" "no" "exact"
+fi
 
 if [ -f /etc/security/pwquality.conf ]; then
     POLICY_COUNT=$(grep -E "^(minlen|dcredit|ucredit|ocredit|lcredit)" /etc/security/pwquality.conf | wc -l)
@@ -662,6 +674,37 @@ if [ -f /etc/apache2/apache2.conf ]; then
     fi
 else
     echo -e "${YELLOW}⚠️  Apache config not found${NC}"
+    ((WARNINGS++))
+fi
+
+# Check Nginx proxy timeouts (required for large uploads/imports)
+if [ -f /etc/nginx/nginx.conf ]; then
+    CONNECT_TIMEOUT=$(grep "proxy_connect_timeout" /etc/nginx/nginx.conf | grep -v "^#" | grep -v "^\s*#" | awk '{print $2}' | sed 's/s;//' | head -1)
+    READ_TIMEOUT=$(grep "proxy_read_timeout" /etc/nginx/nginx.conf | grep -v "^#" | grep -v "^\s*#" | awk '{print $2}' | sed 's/s;//' | head -1)
+    SEND_TIMEOUT=$(grep "proxy_send_timeout" /etc/nginx/nginx.conf | grep -v "^#" | grep -v "^\s*#" | awk '{print $2}' | sed 's/s;//' | head -1)
+
+    if [ -n "$CONNECT_TIMEOUT" ]; then
+        check_result "Nginx proxy_connect_timeout" "600" "$CONNECT_TIMEOUT" "exact"
+    else
+        echo -e "${YELLOW}⚠️  Nginx proxy_connect_timeout not found${NC}"
+        ((WARNINGS++))
+    fi
+
+    if [ -n "$READ_TIMEOUT" ]; then
+        check_result "Nginx proxy_read_timeout" "600" "$READ_TIMEOUT" "exact"
+    else
+        echo -e "${YELLOW}⚠️  Nginx proxy_read_timeout not found${NC}"
+        ((WARNINGS++))
+    fi
+
+    if [ -n "$SEND_TIMEOUT" ]; then
+        check_result "Nginx proxy_send_timeout" "600" "$SEND_TIMEOUT" "exact"
+    else
+        echo -e "${YELLOW}⚠️  Nginx proxy_send_timeout not found${NC}"
+        ((WARNINGS++))
+    fi
+else
+    echo -e "${YELLOW}⚠️  Nginx config not found${NC}"
     ((WARNINGS++))
 fi
 
