@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.3
+# Post-HestiaCP Cleanup Script v1.4
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.4 Changes:
+# - Fixed ANTIVIRUS_SYSTEM config update (append if doesn't exist, not just replace)
 #
 # v1.3 Changes:
 # - Disable ANTISPAM_SYSTEM and ANTIVIRUS_SYSTEM in HestiaCP config (prevents GUI from showing removed services)
@@ -38,7 +41,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.3${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.4${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -111,8 +114,18 @@ fi
 
 # Step 6: Disable mail systems in HestiaCP config
 log_print "${YELLOW}[6/10] Disabling mail systems in HestiaCP config...${NC}"
-sed -i "s/^ANTISPAM_SYSTEM=.*/ANTISPAM_SYSTEM=''/g" /usr/local/hestia/conf/hestia.conf >> "$LOGFILE" 2>&1
-sed -i "s/^ANTIVIRUS_SYSTEM=.*/ANTIVIRUS_SYSTEM=''/g" /usr/local/hestia/conf/hestia.conf >> "$LOGFILE" 2>&1
+# Update ANTISPAM_SYSTEM (replace if exists, append if not)
+if grep -q "^ANTISPAM_SYSTEM=" /usr/local/hestia/conf/hestia.conf; then
+    sed -i "s/^ANTISPAM_SYSTEM=.*/ANTISPAM_SYSTEM=''/g" /usr/local/hestia/conf/hestia.conf >> "$LOGFILE" 2>&1
+else
+    echo "ANTISPAM_SYSTEM=''" >> /usr/local/hestia/conf/hestia.conf
+fi
+# Update ANTIVIRUS_SYSTEM (replace if exists, append if not)
+if grep -q "^ANTIVIRUS_SYSTEM=" /usr/local/hestia/conf/hestia.conf; then
+    sed -i "s/^ANTIVIRUS_SYSTEM=.*/ANTIVIRUS_SYSTEM=''/g" /usr/local/hestia/conf/hestia.conf >> "$LOGFILE" 2>&1
+else
+    echo "ANTIVIRUS_SYSTEM=''" >> /usr/local/hestia/conf/hestia.conf
+fi
 log_print "${GREEN}✓ HestiaCP mail config disabled${NC}"
 
 # Step 7: Remove build tools (gcc, make) - no longer needed
