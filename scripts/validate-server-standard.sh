@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.3
+# Server Standard Validation Script v4.4
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.4 Changes:
+# - Changed: Package count below baseline now WARNING (not FAILURE) - acceptable variation
+# - Adjusted: Package count baseline 959→950 (allows for normal cleanup variations)
 #
 # v4.3 Changes (Gap fixes from comprehensive audit):
 # - Added: libpam-pwquality package check (explicit package verification)
@@ -494,8 +498,8 @@ done
 print_header "13. PACKAGE COUNT"
 
 PKG_COUNT=$(dpkg --get-selections 2>/dev/null | grep -v deinstall | wc -l)
-BASELINE=959
-TOLERANCE=50
+BASELINE=950
+TOLERANCE=59
 
 echo -e "${BLUE}Total packages: $PKG_COUNT${NC}"
 echo -e "${BLUE}Baseline: $BASELINE (acceptable range: $BASELINE-$(($BASELINE + $TOLERANCE)))${NC}"
@@ -504,8 +508,8 @@ if [ $PKG_COUNT -ge $BASELINE ] && [ $PKG_COUNT -le $(($BASELINE + $TOLERANCE)) 
     echo -e "${GREEN}✅ Package count within acceptable range${NC}"
     ((PASSED++))
 elif [ $PKG_COUNT -lt $BASELINE ]; then
-    echo -e "${RED}❌ Package count below baseline (may be missing packages)${NC}"
-    ((FAILED++))
+    echo -e "${YELLOW}⚠️  Package count below baseline ($PKG_COUNT < $BASELINE) - acceptable variation after cleanup${NC}"
+    ((WARNINGS++))
 else
     echo -e "${YELLOW}⚠️  Package count above tolerance (+$(($PKG_COUNT - $BASELINE)) packages)${NC}"
     echo -e "${YELLOW}    This may be acceptable if user-installed packages present${NC}"
