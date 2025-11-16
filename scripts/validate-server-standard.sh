@@ -1,9 +1,15 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.4
+# Server Standard Validation Script v4.5
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.5 Changes:
+# - Enhanced: Summary now shows separate v2.1 and v2.2 compliance scores
+# - v2.1 compliance calculated from required checks only (PASSED + FAILED)
+# - v2.2 readiness shown separately for future enhancements (WARNINGS)
+# - Fixes cosmetic issue: 100% v2.1 compliant servers now correctly show 100%, not 87%
 #
 # v4.4 Changes:
 # - Changed: Package count below baseline now WARNING (not FAILURE) - acceptable variation
@@ -793,21 +799,38 @@ fi
 # ============================================
 print_header "VALIDATION SUMMARY"
 
+# Calculate v2.1 checks only (PASSED + FAILED)
+V21_CHECKS=$(($PASSED + $FAILED))
 TOTAL_CHECKS=$(($PASSED + $FAILED + $WARNINGS))
 
-echo -e "${GREEN}✅ Passed: $PASSED${NC}"
-echo -e "${RED}❌ Failed: $FAILED${NC}"
-echo -e "${YELLOW}⚠️  Warnings: $WARNINGS${NC}"
-echo -e "${BLUE}Total checks: $TOTAL_CHECKS${NC}"
-echo ""
-
-# Calculate percentage
-COMPLIANCE_PCT=0
-if [ $TOTAL_CHECKS -gt 0 ]; then
-    COMPLIANCE_PCT=$((($PASSED * 100) / $TOTAL_CHECKS))
+# Calculate v2.1 compliance percentage
+V21_COMPLIANCE_PCT=0
+if [ $V21_CHECKS -gt 0 ]; then
+    V21_COMPLIANCE_PCT=$((($PASSED * 100) / $V21_CHECKS))
 fi
 
-echo -e "${BLUE}Compliance: ${COMPLIANCE_PCT}%${NC}"
+# Calculate v2.2 readiness (warnings are v2.2 items)
+V22_TOTAL=$WARNINGS
+V22_READY=0  # All warnings are pending items
+V22_READINESS_PCT=0
+if [ $V22_TOTAL -gt 0 ]; then
+    V22_READINESS_PCT=$((($V22_READY * 100) / $V22_TOTAL))
+fi
+
+echo -e "${BLUE}v2.1 COMPLIANCE (Required Standard):${NC}"
+echo -e "${GREEN}  ✅ Passed: $PASSED${NC}"
+echo -e "${RED}  ❌ Failed: $FAILED${NC}"
+echo -e "${GREEN}  📊 v2.1 Compliance: ${V21_COMPLIANCE_PCT}%${NC}"
+echo ""
+
+if [ $WARNINGS -gt 0 ]; then
+    echo -e "${BLUE}v2.2 READINESS (Future Enhancements):${NC}"
+    echo -e "${YELLOW}  ⚠️  Pending: $WARNINGS${NC}"
+    echo -e "${YELLOW}  📊 v2.2 Ready: ${V22_READINESS_PCT}%${NC}"
+    echo ""
+fi
+
+echo -e "${BLUE}Total checks performed: $TOTAL_CHECKS${NC}"
 echo ""
 
 # Final verdict
