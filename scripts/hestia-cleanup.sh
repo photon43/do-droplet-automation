@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.4
+# Post-HestiaCP Cleanup Script v1.5
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.5 Changes:
+# - Added automatic purge of orphaned configuration files (packages in 'rc' state)
+# - Ensures 100% v2.1 compliance without manual intervention
 #
 # v1.4 Changes:
 # - Fixed ANTIVIRUS_SYSTEM config update (append if doesn't exist, not just replace)
@@ -41,7 +45,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.4${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.5${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -145,6 +149,16 @@ if [ $? -eq 0 ]; then
     log_print "${GREEN}✓ Orphaned packages removed${NC}"
 else
     log_print "${YELLOW}⚠ Autoremove had warnings${NC}"
+fi
+
+# Step 8.5: Purge orphaned configuration files
+log_print "${YELLOW}Purging orphaned configuration files...${NC}"
+ORPHANED_CONFIGS=$(dpkg --list 2>/dev/null | grep "^rc" | cut -d " " -f 3)
+if [ -n "$ORPHANED_CONFIGS" ]; then
+    echo "$ORPHANED_CONFIGS" | xargs -r dpkg --purge >> "$LOGFILE" 2>&1
+    log_print "${GREEN}✓ Orphaned configs purged${NC}"
+else
+    log_print "${GREEN}✓ No orphaned configs found${NC}"
 fi
 
 # Step 9: Clean package cache
