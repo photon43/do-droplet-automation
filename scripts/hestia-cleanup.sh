@@ -1,9 +1,14 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.5
+# Post-HestiaCP Cleanup Script v1.6
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.6 Changes:
+# - Fixed fail2ban configuration after mail service removal
+# - Disables exim-iptables, dovecot-iptables, and vsftpd-iptables jails
+# - Ensures fail2ban survives reboots after cleanup
 #
 # v1.5 Changes:
 # - Added automatic purge of orphaned configuration files (packages in 'rc' state)
@@ -45,7 +50,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.5${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.6${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -131,6 +136,33 @@ else
     echo "ANTIVIRUS_SYSTEM=''" >> /usr/local/hestia/conf/hestia.conf
 fi
 log_print "${GREEN}✓ HestiaCP mail config disabled${NC}"
+
+# Step 6.5: Fix fail2ban configuration (disable mail/FTP jails)
+log_print "${YELLOW}[6.5/10] Fixing fail2ban configuration...${NC}"
+if [ -f /etc/fail2ban/jail.local ]; then
+    # Backup current jail.local
+    cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.bak-cleanup >> "$LOGFILE" 2>&1
+
+    # Disable exim-iptables jail
+    sed -i '/^\[exim-iptables\]/,/^$/s/^enabled  = true/enabled  = false/' /etc/fail2ban/jail.local >> "$LOGFILE" 2>&1
+
+    # Disable dovecot-iptables jail
+    sed -i '/^\[dovecot-iptables\]/,/^$/s/^enabled  = true/enabled  = false/' /etc/fail2ban/jail.local >> "$LOGFILE" 2>&1
+
+    # Disable vsftpd-iptables jail
+    sed -i '/^\[vsftpd-iptables\]/,/^$/s/^enabled  = true/enabled  = false/' /etc/fail2ban/jail.local >> "$LOGFILE" 2>&1
+
+    # Restart fail2ban to apply changes
+    systemctl restart fail2ban >> "$LOGFILE" 2>&1
+
+    if [ $? -eq 0 ]; then
+        log_print "${GREEN}✓ fail2ban configuration fixed and service restarted${NC}"
+    else
+        log_print "${YELLOW}⚠ fail2ban restart had warnings${NC}"
+    fi
+else
+    log_print "${YELLOW}⚠ /etc/fail2ban/jail.local not found (fail2ban might not be installed)${NC}"
+fi
 
 # Step 7: Remove build tools (gcc, make) - no longer needed
 log_print "${YELLOW}[7/10] Removing build tools (gcc, make)...${NC}"
