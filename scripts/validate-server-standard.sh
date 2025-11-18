@@ -1,9 +1,14 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.5
+# Server Standard Validation Script v4.6
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.6 Changes:
+# - Added: Reboot resilience test reminder after successful validation
+# - Reminds users to test that all 6 critical services auto-start after reboot
+# - Prevents production outages from configurations that work but don't survive reboot
 #
 # v4.5 Changes:
 # - Enhanced: Summary now shows separate v2.1 and v2.2 compliance scores
@@ -844,6 +849,24 @@ if [ $FAILED -eq 0 ]; then
         echo -e "${YELLOW}Note: $WARNINGS warning(s) found - review recommended${NC}"
     fi
 
+    # Reboot resilience reminder
+    echo ""
+    echo -e "${BLUE}=========================================="
+    echo -e "⚠️  REBOOT RESILIENCE TEST REQUIRED"
+    echo -e "==========================================${NC}"
+    echo ""
+    echo -e "${YELLOW}This validation checks current state only.${NC}"
+    echo -e "${YELLOW}To confirm reboot resilience, run:${NC}"
+    echo ""
+    echo -e "  ${GREEN}reboot${NC}"
+    echo ""
+    echo -e "${YELLOW}After server restarts, verify all services auto-start:${NC}"
+    echo ""
+    echo -e "  ${GREEN}systemctl status auditd fail2ban php8.3-fpm apache2 nginx mysql | grep -E \"Active:|Loaded:\"${NC}"
+    echo ""
+    echo -e "${YELLOW}All 6 services MUST show: Active: active (running)${NC}"
+    echo ""
+
     exit 0
 else
     echo -e "${RED}=========================================="
@@ -851,6 +874,8 @@ else
     echo -e "==========================================${NC}"
     echo ""
     echo -e "${RED}$FAILED check(s) failed - remediation required${NC}"
+    echo ""
+    echo -e "${YELLOW}Fix all failures before testing reboot resilience.${NC}"
 
     exit 1
 fi
