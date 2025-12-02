@@ -1,9 +1,14 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.6
+# Server Standard Validation Script v4.7
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.7 Changes:
+# - Added: WP-Cron root crontab warning check
+# - Warns if wp-cron entries found in root's crontab (causes permission issues)
+# - WP-Cron must run as site user, not root, to avoid root-owned upload folders
 #
 # v4.6 Changes:
 # - Added: Reboot resilience test reminder after successful validation
@@ -486,6 +491,40 @@ if [ $CRON_COUNT -eq 2 ]; then
 elif [ $CRON_COUNT -gt 0 ]; then
     echo -e "${YELLOW}Found cron jobs (expected 2):${NC}"
     crontab -l 2>/dev/null | grep "unified-hestia-backup"
+fi
+
+# ============================================
+# SECTION 11.5: WP-CRON CONFIGURATION CHECK
+# ============================================
+print_header "11.5. WP-CRON CONFIGURATION CHECK"
+
+# Check for wp-cron entries in ROOT's crontab (should be NONE)
+ROOT_WPCRON=$(crontab -l 2>/dev/null | grep -c "wp-cron")
+
+if [ "$ROOT_WPCRON" -eq 0 ]; then
+    echo -e "${GREEN}✅ No wp-cron entries in root crontab (correct)${NC}"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}⚠️  Found $ROOT_WPCRON wp-cron entries in ROOT crontab!${NC}"
+    echo -e "${YELLOW}    WP-Cron must run as site user, NOT root${NC}"
+    echo -e "${YELLOW}    Root cron causes permission issues (root-owned upload folders)${NC}"
+    echo ""
+    echo -e "${YELLOW}Offending entries:${NC}"
+    crontab -l 2>/dev/null | grep "wp-cron"
+    echo ""
+    echo -e "${YELLOW}Fix: Migrate entries to user crontabs with 'crontab -u USERNAME'${NC}"
+    ((WARNINGS++))
+fi
+
+# Show user crontab wp-cron count for reference
+USER_WPCRON_COUNT=0
+for user in $(ls /home/ 2>/dev/null); do
+    count=$(crontab -u "$user" -l 2>/dev/null | grep -c "wp-cron")
+    USER_WPCRON_COUNT=$((USER_WPCRON_COUNT + count))
+done
+
+if [ "$USER_WPCRON_COUNT" -gt 0 ]; then
+    echo -e "${BLUE}  User crontab wp-cron entries: $USER_WPCRON_COUNT${NC}"
 fi
 
 # ============================================
