@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.6
+# Post-HestiaCP Cleanup Script v1.7
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.7 Changes:
+# - Added backup compression setting (gzip level 9 instead of zst)
+# - zst is hard to work with; gzip is universally compatible
 #
 # v1.6 Changes:
 # - Fixed fail2ban configuration after mail service removal
@@ -50,7 +54,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.6${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.7${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -164,6 +168,16 @@ else
     log_print "${YELLOW}⚠ /etc/fail2ban/jail.local not found (fail2ban might not be installed)${NC}"
 fi
 
+# Step 6.6: Set backup compression to gzip (zst is hard to work with)
+log_print "${YELLOW}[6.6/10] Setting backup compression to gzip...${NC}"
+v-change-sys-config-value BACKUP_MODE gzip >> "$LOGFILE" 2>&1
+v-change-sys-config-value BACKUP_GZIP 9 >> "$LOGFILE" 2>&1
+if grep -q "BACKUP_MODE='gzip'" /usr/local/hestia/conf/hestia.conf; then
+    log_print "${GREEN}✓ Backup compression set to gzip level 9${NC}"
+else
+    log_print "${YELLOW}⚠ Backup compression setting may have failed - verify manually${NC}"
+fi
+
 # Step 7: Remove build tools (gcc, make) - no longer needed
 log_print "${YELLOW}[7/10] Removing build tools (gcc, make)...${NC}"
 apt-get purge -y gcc gcc-13 gcc-13-x86-64-linux-gnu gcc-x86-64-linux-gnu make >> "$LOGFILE" 2>&1
@@ -240,6 +254,7 @@ log_print "Cleanup actions:"
 log_print "  ✓ Orphaned packages removed"
 log_print "  ✓ Package cache cleaned"
 log_print "  ✓ Remaining compilers hardened (if any)"
+log_print "  ✓ Backup compression set to gzip level 9"
 log_print ""
 log_print "Next steps:"
 log_print "  1. Review cleanup log: cat $LOGFILE"
