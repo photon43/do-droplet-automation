@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.7
+# Server Standard Validation Script v4.8
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.8 Changes:
+# - Added: vsftpd masked, nothing listening on port 21, FTP_SYSTEM disabled (3 checks)
+# - Matches hestia-cleanup.sh v1.8, which turns FTP off (file access is SFTP over SSH)
 #
 # v4.7 Changes:
 # - Added: WP-Cron root crontab warning check
@@ -162,6 +166,12 @@ check_result "Dovecot masked" "1" "$DOVECOT_MASKED" "min"
 EXIM_MASKED=$(systemctl status exim4 2>&1 | grep -c "masked")
 check_result "Exim4 masked" "1" "$EXIM_MASKED" "min"
 
+VSFTPD_MASKED=$(systemctl status vsftpd 2>&1 | grep -c "masked")
+check_result "vsftpd masked" "1" "$VSFTPD_MASKED" "min"
+
+FTP_LISTENING=$(ss -tln 2>/dev/null | grep -c ':21 ')
+check_result "Nothing listening on port 21" "0" "$FTP_LISTENING" "exact"
+
 # ============================================
 # SECTION 3: HESTIACP MAIL CONFIG
 # ============================================
@@ -173,8 +183,12 @@ if [ -f /usr/local/hestia/conf/hestia.conf ]; then
 
     check_result "ANTISPAM_SYSTEM disabled" "1" "$ANTISPAM" "min"
     check_result "ANTIVIRUS_SYSTEM disabled" "1" "$ANTIVIRUS" "min"
+
+    FTP_SYS=$(grep "^FTP_SYSTEM" /usr/local/hestia/conf/hestia.conf | grep -c "''")
+    check_result "FTP_SYSTEM disabled" "1" "$FTP_SYS" "min"
 else
     echo -e "${RED}❌ HestiaCP config not found: /usr/local/hestia/conf/hestia.conf${NC}"
+    ((FAILED++))
     ((FAILED++))
     ((FAILED++))
 fi

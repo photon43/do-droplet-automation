@@ -1,9 +1,14 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.7
+# Post-HestiaCP Cleanup Script v1.8
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.8 Changes:
+# - Disables FTP: stops, disables and masks vsftpd, sets FTP_SYSTEM='', deletes the FTP firewall rule
+# - Previously v1.6 disabled the vsftpd fail2ban jail but left vsftpd running, so FTP brute force went unbanned
+# - File access is SFTP over SSH and the HestiaCP file manager, neither of which uses vsftpd
 #
 # v1.7 Changes:
 # - Added backup compression setting (gzip level 9 instead of zst)
@@ -54,7 +59,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.7${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.8${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -140,6 +145,22 @@ else
     echo "ANTIVIRUS_SYSTEM=''" >> /usr/local/hestia/conf/hestia.conf
 fi
 log_print "${GREEN}✓ HestiaCP mail config disabled${NC}"
+
+# Step 6.4: Disable FTP (vsftpd) - file access is SFTP over SSH
+log_print "${YELLOW}[6.4/10] Disabling FTP (vsftpd)...${NC}"
+systemctl stop vsftpd 2>/dev/null || true
+systemctl disable vsftpd 2>/dev/null || true
+systemctl mask vsftpd 2>/dev/null || true
+v-change-sys-config-value FTP_SYSTEM '' >> "$LOGFILE" 2>&1
+FTP_RULE=$(grep -oP "RULE='\K[0-9]+(?=.*COMMENT='FTP')" /usr/local/hestia/data/firewall/rules.conf 2>/dev/null)
+if [ -n "$FTP_RULE" ]; then
+    v-delete-firewall-rule "$FTP_RULE" >> "$LOGFILE" 2>&1
+fi
+if grep -q "^FTP_SYSTEM=''" /usr/local/hestia/conf/hestia.conf && ! ss -tln | grep -q ':21 '; then
+    log_print "${GREEN}✓ vsftpd masked, FTP_SYSTEM cleared, FTP firewall rule removed${NC}"
+else
+    log_print "${YELLOW}⚠ FTP disable may be incomplete - verify manually${NC}"
+fi
 
 # Step 6.5: Fix fail2ban configuration (disable mail/FTP jails)
 log_print "${YELLOW}[6.5/10] Fixing fail2ban configuration...${NC}"
@@ -248,6 +269,7 @@ log_print "  ✓ Exim - Mail server (using Brevo instead)"
 log_print "  ✓ Dovecot - IMAP/POP3 server (not needed)"
 log_print "  ✓ SpamAssassin - Spam filtering (not needed)"
 log_print "  ✓ Roundcube - Webmail interface (not needed)"
+log_print "  ✓ vsftpd - FTP server masked (SFTP over SSH instead)"
 log_print "  ✓ gcc/make - Build tools (not needed)"
 log_print ""
 log_print "Cleanup actions:"
@@ -258,7 +280,7 @@ log_print "  ✓ Backup compression set to gzip level 9"
 log_print ""
 log_print "Next steps:"
 log_print "  1. Review cleanup log: cat $LOGFILE"
-log_print "  2. Verify services removed: systemctl list-units | grep -E 'exim|dovecot|clam|spam'"
+log_print "  2. Verify services removed: systemctl list-units | grep -E 'exim|dovecot|clam|spam|vsftpd'"
 log_print "  3. Check disk space freed: df -h"
 log_print ""
 
