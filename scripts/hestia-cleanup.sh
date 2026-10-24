@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Post-HestiaCP Cleanup Script v1.8
+# Post-HestiaCP Cleanup Script v1.9
 # Removes unnecessary mail services and build tools
 # Run as root after HestiaCP installation
 # Usage: ./hestia-cleanup.sh
+#
+# v1.9 Changes:
+# - Sets MAIL_SYSTEM='' and IMAP_SYSTEM='' (left set, the daily Let's Encrypt cron tried to restart masked dovecot: Error 20)
+# - Deletes the SMTP, IMAP and POP3 firewall rules (looked up by comment; HestiaCP renumbers rules after each delete)
 #
 # v1.8 Changes:
 # - Disables FTP: stops, disables and masks vsftpd, sets FTP_SYSTEM='', deletes the FTP firewall rule
@@ -59,7 +63,7 @@ log_print() {
 
 # Header
 log_print "${GREEN}================================================${NC}"
-log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.8${NC}"
+log_print "${GREEN}  Post-HestiaCP Cleanup Script v1.9${NC}"
 log_print "${GREEN}================================================${NC}"
 log_print ""
 log_print "Log file: $LOGFILE"
@@ -144,6 +148,16 @@ if grep -q "^ANTIVIRUS_SYSTEM=" /usr/local/hestia/conf/hestia.conf; then
 else
     echo "ANTIVIRUS_SYSTEM=''" >> /usr/local/hestia/conf/hestia.conf
 fi
+# Clear mail and IMAP systems so HestiaCP stops trying to restart them
+v-change-sys-config-value MAIL_SYSTEM '' >> "$LOGFILE" 2>&1
+v-change-sys-config-value IMAP_SYSTEM '' >> "$LOGFILE" 2>&1
+# Delete mail firewall rules; look each up just before deleting (rules renumber after a delete)
+for MAIL_RULE_COMMENT in SMTP IMAP POP3; do
+    MAIL_RULE=$(grep -oP "RULE='\K[0-9]+(?=.*COMMENT='$MAIL_RULE_COMMENT')" /usr/local/hestia/data/firewall/rules.conf 2>/dev/null | head -1)
+    if [ -n "$MAIL_RULE" ]; then
+        v-delete-firewall-rule "$MAIL_RULE" >> "$LOGFILE" 2>&1
+    fi
+done
 log_print "${GREEN}✓ HestiaCP mail config disabled${NC}"
 
 # Step 6.4: Disable FTP (vsftpd) - file access is SFTP over SSH

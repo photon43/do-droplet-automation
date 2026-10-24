@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Server Standard Validation Script v4.8
+# Server Standard Validation Script v4.9
 # Validates FUNCTIONAL compliance with v2.1 baseline standard
 # Checks actual system state for ALL arsenal scripts
 # Usage: ./validate-server-standard.sh
+#
+# v4.9 Changes:
+# - Added: MAIL_SYSTEM disabled, IMAP_SYSTEM disabled, no SMTP/IMAP/POP3 firewall rules (3 checks)
+# - Matches hestia-cleanup.sh v1.9
 #
 # v4.8 Changes:
 # - Added: vsftpd masked, nothing listening on port 21, FTP_SYSTEM disabled (3 checks)
@@ -186,8 +190,19 @@ if [ -f /usr/local/hestia/conf/hestia.conf ]; then
 
     FTP_SYS=$(grep "^FTP_SYSTEM" /usr/local/hestia/conf/hestia.conf | grep -c "''")
     check_result "FTP_SYSTEM disabled" "1" "$FTP_SYS" "min"
+
+    MAIL_SYS=$(grep "^MAIL_SYSTEM" /usr/local/hestia/conf/hestia.conf | grep -c "''")
+    IMAP_SYS=$(grep "^IMAP_SYSTEM" /usr/local/hestia/conf/hestia.conf | grep -c "''")
+    MAIL_RULES=$(grep -cE "COMMENT='(SMTP|IMAP|POP3)'" /usr/local/hestia/data/firewall/rules.conf 2>/dev/null)
+
+    check_result "MAIL_SYSTEM disabled" "1" "$MAIL_SYS" "min"
+    check_result "IMAP_SYSTEM disabled" "1" "$IMAP_SYS" "min"
+    check_result "No SMTP/IMAP/POP3 firewall rules" "0" "$MAIL_RULES" "exact"
 else
     echo -e "${RED}❌ HestiaCP config not found: /usr/local/hestia/conf/hestia.conf${NC}"
+    ((FAILED++))
+    ((FAILED++))
+    ((FAILED++))
     ((FAILED++))
     ((FAILED++))
     ((FAILED++))
